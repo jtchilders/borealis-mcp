@@ -61,6 +61,9 @@ borealis-mcp/
 │       ├── validation.py            # Input validation utilities
 │       ├── formatting.py            # Output formatting utilities
 │       └── errors.py                # Custom exception classes
+├── tools/                           # Utility scripts
+│   ├── http_bridge.py               # STDIO to HTTP bridge for remote access
+│   └── start_borealis_tunnel.sh     # Helper script for SSH tunnel + MCP server
 ├── config/                          # User configuration directory
 │   ├── borealis.yaml                # Server configuration
 │   ├── systems/                     # System definitions (YAML)
@@ -2005,7 +2008,11 @@ def test_pytorch_script_generation():
 
 ## Deployment
 
-### On Aurora Login Node
+## Deployment
+
+### Local Development / Direct Access
+
+For users with direct access to Aurora login nodes (e.g., from ALCF campus):
 
 1. Clone repository:
 ```bash
@@ -2031,12 +2038,387 @@ export PBS_ACCOUNT=datascience
 export BOREALIS_CONFIG_DIR=/path/to/custom/config
 ```
 
-4. Run server:
+4. Run server in STDIO mode:
 ```bash
 python -m borealis_mcp.server
 ```
 
-The server will automatically detect it's running on Aurora and load the appropriate configuration. You can override this with the `BOREALIS_SYSTEM` environment variable.
+The server will automatically detect it's running on Aurora and load the appropriate configuration.
+
+---
+
+### Remote Access via SSH Tunnel (Recommended for External Users)
+
+**Challenge**: ALCF login nodes are behind a restrictive firewall and require MFA. Direct SSH connections from MCP clients don't work well with interactive authentication.
+
+**Solution**: Use SSH tunnel + HTTP transport + local bridge script.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ User's Laptop                                               │
+│                                                             │
+│  ┌──────────────────┐                                      │
+│  │ Claude Desktop   │                                      │
+│  │ (or MCP client)  │                                      │
+│  └────────┬─────────┘                                      │
+│           │ stdio                                           │
+│           ▼                                                 │
+│  ┌──────────────────┐                                      │
+│  │  http_bridge.py  │                                      │
+│  │  (STDIO ↔ HTTP)  │                                      │
+│  └────────┬─────────┘                                      │
+│           │ HTTP                                            │
+│           ▼                                                 │
+│  ┌──────────────────┐                                      │
+│  │  localhost:9000  │ ◄─── SSH Tunnel                     │
+│  └──────────────────┘                                      │
+└──────────────────────┼──────────────────────────────────────┘
+                       │
+                       │ Encrypted SSH Tunnel
+                       │ (User authenticated with MFA)
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│ Aurora Login Node                                           │
+│                                                             │
+│  ┌──────────────────┐                                      │
+│  │ Borealis MCP     │                                      │
+│  │ HTTP Server      │                                      │
+│  │ :9000            │                                      │
+│  └──────────────────┘                                      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Setup Steps
+
+**Step 1: On Your Laptop - Create SSH Tunnel**
+
+Open a terminal and establish the SSH tunnel (requires MFA):
+
+```bash
+ssh -L 9000:localhost:9000 username@aurora.alcf.anl.gov
+```
+
+Keep this terminal open. You'll authenticate once with MFA, and the tunnel stays active.
+
+**Step 2: On Aurora Login Node - Start Borealis MCP in HTTP Mode**
+
+In the SSH session from Step 1:
+
+```bash
+cd /path/to/borealis-mcp
+source venv/bin/activate
+
+# Set configuration
+export BOREALIS_SYSTEM=aurora
+export PBS_ACCOUNT=your_project
+
+# Start in HTTP mode
+python -m borealis_mcp.server --transport http --port 9000
+```
+
+The server will now listen on `localhost:9000` on the Aurora login node.
+
+**Step 3: On Your Laptop - Configure MCP Client**
+
+Create the HTTP bridge script (see `tools/http_bridge.py` below), then configure your MCP client:
+
+**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on Mac):
+```json
+{
+  "mcpServers": {
+    "borealis": {
+      "command": "python",
+      "args": ["/path/to/borealis-mcp/tools/http_bridge.py", "http://localhost:9000/mcp"]
+    }
+  }
+}
+```
+
+**For other MCP clients**: Use similar configuration pointing to the bridge script.
+
+**Step 4: Use Borealis MCP**
+
+Now you can interact with Borealis through your MCP client. The bridge translates between STDIO (what MCP clients expect) and HTTP (what the remote server provides).
+
+#### HTTP Bridge Implementation
+
+Create `tools/http_bridge.py`:
+
+```python
+#!/usr/bin/env python3
+"""
+HTTP Bridge for Borealis MCP
+
+Translates between STDIO (MCP client) and HTTP (remote MCP server).
+This allows MCP clients to connect to Borealis running on Aurora via SSH tunnel.
+
+Usage:
+    python http_bridge.py http://localhost:9000/mcp
+"""
+
+import sys
+import json
+import requests
+import argparse
+from typing import Optional
+
+
+class HTTPBridge:
+    """Bridge between STDIO and HTTP for MCP communication"""
+    
+    def __init__(self, server_url: str):
+        """
+        Initialize HTTP bridge.
+        
+        Args:
+            server_url: URL of the HTTP MCP server (e.g., http://localhost:9000/mcp)
+        """
+        self.server_url = server_url.rstrip('/')
+        self.session = requests.Session()
+        self.session_id: Optional[str] = None
+        
+        # Ensure server is reachable
+        self._check_server()
+    
+    def _check_server(self):
+        """Check if server is reachable"""
+        try:
+            response = self.session.get(f"{self.server_url}/health", timeout=5)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Error: Cannot connect to MCP server at {self.server_url}", file=sys.stderr)
+            print(f"Make sure SSH tunnel is active and Borealis MCP is running", file=sys.stderr)
+            print(f"Details: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def send_request(self, request: dict) -> dict:
+        """
+        Send JSON-RPC request to HTTP server.
+        
+        Args:
+            request: JSON-RPC request object
+            
+        Returns:
+            JSON-RPC response object
+        """
+        try:
+            # Add session ID if we have one
+            headers = {'Content-Type': 'application/json'}
+            if self.session_id:
+                headers['X-Session-ID'] = self.session_id
+            
+            response = self.session.post(
+                f"{self.server_url}/messages",
+                json=request,
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            # Extract session ID from response if provided
+            if 'X-Session-ID' in response.headers:
+                self.session_id = response.headers['X-Session-ID']
+            
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            return {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "error": {
+                    "code": -32000,
+                    "message": f"HTTP request failed: {str(e)}"
+                }
+            }
+    
+    def run(self):
+        """
+        Main loop: read from stdin, send to HTTP server, write response to stdout.
+        """
+        print("HTTP Bridge started. Connecting to MCP server...", file=sys.stderr)
+        print(f"Server URL: {self.server_url}", file=sys.stderr)
+        
+        for line in sys.stdin:
+            try:
+                # Parse JSON-RPC request from stdin
+                request = json.loads(line.strip())
+                
+                # Send to HTTP server
+                response = self.send_request(request)
+                
+                # Write response to stdout
+                print(json.dumps(response), flush=True)
+                
+            except json.JSONDecodeError as e:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": f"Parse error: {str(e)}"
+                    }
+                }
+                print(json.dumps(error_response), flush=True)
+            
+            except Exception as e:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32603,
+                        "message": f"Internal error: {str(e)}"
+                    }
+                }
+                print(json.dumps(error_response), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='HTTP bridge for MCP STDIO to HTTP translation'
+    )
+    parser.add_argument(
+        'server_url',
+        help='URL of the HTTP MCP server (e.g., http://localhost:9000/mcp)'
+    )
+    args = parser.parse_args()
+    
+    bridge = HTTPBridge(args.server_url)
+    bridge.run()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+Make it executable:
+```bash
+chmod +x tools/http_bridge.py
+```
+
+#### Server-Side HTTP Transport
+
+Update `server.py` to support HTTP transport:
+
+```python
+# At the end of server.py, replace:
+# if __name__ == "__main__":
+#     mcp.run(transport="stdio")
+
+# With:
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Borealis MCP Server')
+    parser.add_argument(
+        '--transport',
+        choices=['stdio', 'http'],
+        default='stdio',
+        help='Transport protocol (stdio for local, http for remote)'
+    )
+    parser.add_argument(
+        '--host',
+        default='127.0.0.1',
+        help='Host to bind to (only for HTTP transport)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=9000,
+        help='Port to bind to (only for HTTP transport)'
+    )
+    parser.add_argument(
+        '--path',
+        default='/mcp',
+        help='URL path for MCP endpoint (only for HTTP transport)'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.transport == 'http':
+        print(f"Starting Borealis MCP in HTTP mode on {args.host}:{args.port}{args.path}", 
+              file=sys.stderr)
+        print("Make sure your SSH tunnel is configured to forward this port", file=sys.stderr)
+        mcp.run(transport='http', host=args.host, port=args.port, path=args.path)
+    else:
+        print("Starting Borealis MCP in STDIO mode", file=sys.stderr)
+        mcp.run(transport='stdio')
+```
+
+#### Helper Script for Easy Tunnel Management
+
+Create `tools/start_borealis_tunnel.sh`:
+
+```bash
+#!/bin/bash
+# Start SSH tunnel and Borealis MCP server
+
+AURORA_USER="${1:-$USER}"
+AURORA_HOST="aurora.alcf.anl.gov"
+LOCAL_PORT=9000
+BOREALIS_PATH="${2:-~/borealis-mcp}"
+
+echo "==============================================="
+echo "Borealis MCP SSH Tunnel Launcher"
+echo "==============================================="
+echo ""
+echo "This will:"
+echo "  1. Establish SSH tunnel to Aurora (requires MFA)"
+echo "  2. Start Borealis MCP server in HTTP mode"
+echo "  3. Keep both running until you press Ctrl+C"
+echo ""
+echo "Connecting to: ${AURORA_USER}@${AURORA_HOST}"
+echo "Local port: ${LOCAL_PORT}"
+echo "Remote path: ${BOREALIS_PATH}"
+echo ""
+echo "You will be prompted for MFA authentication..."
+echo ""
+
+# Start tunnel and server
+ssh -L ${LOCAL_PORT}:localhost:${LOCAL_PORT} \
+    -o ServerAliveInterval=60 \
+    -o ServerAliveCountMax=3 \
+    ${AURORA_USER}@${AURORA_HOST} \
+    "cd ${BOREALIS_PATH} && \
+     source venv/bin/activate && \
+     export BOREALIS_SYSTEM=aurora && \
+     export PBS_ACCOUNT=\${PBS_ACCOUNT:-datascience} && \
+     python -m borealis_mcp.server --transport http --port ${LOCAL_PORT}"
+```
+
+Make it executable and use:
+```bash
+chmod +x tools/start_borealis_tunnel.sh
+./tools/start_borealis_tunnel.sh your_username
+```
+
+#### Troubleshooting
+
+**Connection Refused**
+- Verify SSH tunnel is active: `ssh -L 9000:localhost:9000 username@aurora.alcf.anl.gov`
+- Check Borealis MCP is running on Aurora: Look for "Starting Borealis MCP in HTTP mode"
+- Test tunnel: `curl http://localhost:9000/mcp/health` (should return 200 OK)
+
+**Authentication Errors**
+- MFA has expired: Re-establish SSH tunnel
+- Check you're using the correct Aurora username
+
+**Session Timeout**
+- SSH connection dropped: Re-establish tunnel
+- Add to `~/.ssh/config` for keep-alive:
+  ```
+  Host aurora.alcf.anl.gov
+      ServerAliveInterval 60
+      ServerAliveCountMax 3
+  ```
+
+**Performance Issues**
+- SSH tunnel latency: This is expected for remote access
+- For better performance, submit jobs and poll for results asynchronously
+
+---
 
 ### Using Custom System Configurations
 
