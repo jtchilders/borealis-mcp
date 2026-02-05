@@ -33,6 +33,7 @@ Borealis MCP is an extensible Model Context Protocol server designed to run on A
 ```
 borealis-mcp/
 ├── src/borealis_mcp/
+│   ├── __init__.py
 │   ├── server.py                    # Main FastMCP server entry point
 │   ├── config/
 │   │   ├── __init__.py
@@ -40,7 +41,8 @@ borealis-mcp/
 │   │   └── constants.py             # System-wide constants
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── pbs_client.py            # PBS API wrapper integration
+│   │   ├── mock_pbs_client.py       # Mock PBS client for local development
+│   │   ├── pbs_client.py            # PBS API wrapper (real or mock)
 │   │   ├── pbs_tools.py             # Core PBS MCP tools
 │   │   ├── pbs_resources.py         # Core PBS MCP resources
 │   │   └── pbs_prompts.py           # Core PBS workflow prompts
@@ -50,14 +52,13 @@ borealis-mcp/
 │   │   ├── registry.py              # Application registration system
 │   │   ├── hello_world/
 │   │   │   ├── __init__.py
-│   │   │   ├── tools.py
 │   │   │   └── templates.py
 │   │   └── generic/
 │   │       ├── __init__.py
-│   │       ├── tools.py
 │   │       └── templates.py
 │   └── utils/
 │       ├── __init__.py
+│       ├── logging.py               # Logging configuration
 │       ├── validation.py            # Input validation utilities
 │       ├── formatting.py            # Output formatting utilities
 │       └── errors.py                # Custom exception classes
@@ -70,8 +71,7 @@ borealis-mcp/
 │   │   ├── README.md                # Guide for creating system configs
 │   │   ├── aurora.yaml              # Aurora configuration
 │   │   ├── polaris.yaml             # Polaris configuration
-│   │   ├── sunspot.yaml             # Sunspot configuration
-│   │   └── my_custom_system.yaml    # Example custom system
+│   │   └── sunspot.yaml             # Sunspot configuration
 │   └── applications/                # Application-specific configs (optional)
 │       ├── README.md                # Guide for app configs
 │       └── hello_world/             # Example: hello_world app configs
@@ -79,24 +79,416 @@ borealis-mcp/
 │           ├── polaris.yaml         # Polaris-specific settings
 │           └── default.yaml         # Fallback settings
 ├── tests/
+│   ├── __init__.py
+│   ├── conftest.py                  # Pytest fixtures
 │   ├── unit/
-│   ├── integration/
-│   └── fixtures/
-├── examples/
-│   ├── submit_pytorch_job.py
-│   ├── monitor_workflow.py
-│   └── multi_stage_pipeline.py
+│   │   ├── __init__.py
+│   │   ├── test_config.py
+│   │   ├── test_mock_pbs.py
+│   │   └── test_applications.py
+│   └── integration/
+│       ├── __init__.py
+│       └── test_server.py
 ├── docs/
 │   ├── getting_started.md
 │   ├── adding_applications.md
 │   ├── api_reference.md
 │   └── aurora_guide.md
 ├── pyproject.toml
-├── requirements.txt
-└── README.md
+├── README.md
+└── .gitignore
+```
+
+### Project Configuration
+
+#### `pyproject.toml`
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "borealis-mcp"
+version = "0.1.0"
+description = "MCP server for AI agent interaction with ALCF supercomputers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "ALCF", email = "support@alcf.anl.gov"}
+]
+keywords = ["mcp", "hpc", "pbs", "alcf", "aurora", "polaris"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "fastmcp>=0.1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "mypy>=1.0",
+    "ruff>=0.1",
+]
+http = [
+    "requests>=2.28",
+]
+
+[project.scripts]
+borealis-mcp = "borealis_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/argonne-lcf/borealis-mcp"
+Documentation = "https://github.com/argonne-lcf/borealis-mcp#readme"
+Repository = "https://github.com/argonne-lcf/borealis-mcp"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/borealis_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+```
+
+#### `.gitignore`
+```gitignore
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Local config (may contain sensitive info)
+config/systems/local*.yaml
+config/borealis.local.yaml
+
+# Generated scripts
+*.submit.sh
+
+# Logs
+*.log
+logs/
 ```
 
 ## Component Details
+
+### 0. Mock PBS Client for Local Development
+
+Since `pbs_ifl` is only available on HPC login nodes, a mock client enables local development and testing.
+
+#### `core/mock_pbs_client.py`
+```python
+"""
+Mock PBS client for local development and testing.
+
+Use when pbs_ifl is not available (e.g., on laptops, CI environments).
+Set BOREALIS_MOCK_PBS=1 to enable mock mode.
+"""
+
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional, Mapping
+from datetime import datetime
+import uuid
+
+from borealis_mcp.config.system import SystemConfig
+
+
+class MockPBSException(RuntimeError):
+    """Mock PBS exception for testing"""
+    def __init__(self, message: str, errno: Optional[int] = None):
+        super().__init__(message)
+        self.errno = errno
+
+
+@dataclass
+class MockJobInfo:
+    """Mock job info matching pbs_api.JobInfo interface"""
+    name: str
+    attrs: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class MockQueueInfo:
+    """Mock queue info matching pbs_api.QueueInfo interface"""
+    name: str
+    attrs: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class MockServerInfo:
+    """Mock server info matching pbs_api.ServerInfo interface"""
+    name: str
+    attrs: Dict[str, str] = field(default_factory=dict)
+
+
+class MockPBSClient:
+    """
+    Mock PBS client for development without pbs_ifl.
+
+    Simulates PBS operations with in-memory job storage.
+    """
+
+    def __init__(self, server: Optional[str] = None):
+        self.server = server or "mock-pbs-server"
+        self._connected = False
+        self._jobs: Dict[str, MockJobInfo] = {}
+        self._job_counter = 1000
+
+    def connect(self) -> 'MockPBSClient':
+        self._connected = True
+        return self
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def __enter__(self) -> 'MockPBSClient':
+        return self.connect()
+
+    def __exit__(self, *args) -> None:
+        self.disconnect()
+
+    def stat_server(self) -> List[MockServerInfo]:
+        """Return mock server info"""
+        return [MockServerInfo(
+            name=self.server,
+            attrs={
+                'server_state': 'Active',
+                'total_jobs': str(len(self._jobs)),
+                'pbs_version': 'mock-1.0.0'
+            }
+        )]
+
+    def stat_jobs(self, job_id: Optional[str] = None, extend: Optional[str] = None) -> List[MockJobInfo]:
+        """Return mock job list"""
+        if job_id:
+            job = self._jobs.get(job_id)
+            return [job] if job else []
+        return list(self._jobs.values())
+
+    def stat_queues(self, queue: Optional[str] = None) -> List[MockQueueInfo]:
+        """Return mock queue info"""
+        queues = [
+            MockQueueInfo(name='debug', attrs={
+                'enabled': 'True',
+                'started': 'True',
+                'total_jobs': '0',
+                'resources_max.walltime': '01:00:00'
+            }),
+            MockQueueInfo(name='workq', attrs={
+                'enabled': 'True',
+                'started': 'True',
+                'total_jobs': '0',
+                'resources_max.walltime': '24:00:00'
+            })
+        ]
+        if queue:
+            return [q for q in queues if q.name == queue]
+        return queues
+
+    def select_jobs(self, criteria: Mapping[str, Any]) -> List[MockJobInfo]:
+        """Select jobs matching criteria"""
+        results = []
+        for job in self._jobs.values():
+            match = True
+            for key, value in criteria.items():
+                if job.attrs.get(key) != value:
+                    match = False
+                    break
+            if match:
+                results.append(job)
+        return results
+
+    def submit(
+        self,
+        script_path: str,
+        queue: Optional[str] = None,
+        attrs: Optional[Mapping[str, Any]] = None
+    ) -> str:
+        """Submit a mock job"""
+        job_id = f"{self._job_counter}.{self.server}"
+        self._job_counter += 1
+
+        job_attrs = {
+            'Job_Name': attrs.get('Job_Name', 'mock_job') if attrs else 'mock_job',
+            'job_state': 'Q',
+            'queue': queue or 'workq',
+            'ctime': datetime.now().isoformat(),
+            'Job_Owner': 'mockuser@localhost'
+        }
+
+        if attrs:
+            if 'Account_Name' in attrs:
+                job_attrs['Account_Name'] = attrs['Account_Name']
+            if 'Resource_List' in attrs:
+                for key, value in attrs['Resource_List'].items():
+                    job_attrs[f'Resource_List.{key}'] = str(value)
+
+        self._jobs[job_id] = MockJobInfo(name=job_id, attrs=job_attrs)
+        return job_id
+
+    def get_job(self, job_id: str) -> MockJobInfo:
+        """Get a specific job"""
+        if job_id not in self._jobs:
+            raise MockPBSException(f"Job {job_id} not found", errno=15001)
+        return self._jobs[job_id]
+
+    def delete_job(self, job_id: str, force: bool = False) -> None:
+        """Delete a job"""
+        if job_id in self._jobs:
+            del self._jobs[job_id]
+
+    def hold_job(self, job_id: str, hold: int = 1) -> None:
+        """Hold a job"""
+        if job_id in self._jobs:
+            self._jobs[job_id].attrs['job_state'] = 'H'
+
+    def release_job(self, job_id: str, hold: int = 1) -> None:
+        """Release a held job"""
+        if job_id in self._jobs:
+            self._jobs[job_id].attrs['job_state'] = 'Q'
+
+
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled"""
+    import os
+    return os.environ.get('BOREALIS_MOCK_PBS', '').lower() in ('1', 'true', 'yes')
+
+
+def get_pbs_exception_class():
+    """Get the appropriate exception class based on mode"""
+    if is_mock_mode():
+        return MockPBSException
+    from pbs_api import PBSException
+    return PBSException
+```
+
+#### Updated `core/pbs_client.py` with Mock Support
+```python
+from contextlib import contextmanager
+from typing import Optional
+import os
+
+from borealis_mcp.config.system import SystemConfig
+from borealis_mcp.core.mock_pbs_client import is_mock_mode, MockPBSClient, MockPBSException
+
+# Conditionally import real PBS client
+if is_mock_mode():
+    PBSClient = MockPBSClient
+    PBSException = MockPBSException
+else:
+    try:
+        from pbs_api import PBSClient, PBSException
+    except ImportError as e:
+        raise RuntimeError(
+            "pbs_api module not available. Either:\n"
+            "  1. Run on an HPC login node with pbs_ifl available, or\n"
+            "  2. Set BOREALIS_MOCK_PBS=1 for local development\n"
+            f"Original error: {e}"
+        ) from e
+
+
+@contextmanager
+def get_pbs_client(system_config: SystemConfig, server: Optional[str] = None):
+    """
+    Context manager for PBS client connections.
+
+    Args:
+        system_config: System configuration object
+        server: PBS server hostname (defaults to system config)
+
+    Raises:
+        PBSException: If connection fails with details about the failure
+    """
+    server = server or system_config.pbs_server
+
+    try:
+        with PBSClient(server=server) as client:
+            yield client
+    except PBSException as e:
+        raise PBSException(
+            f"Failed to connect to PBS server '{server}': {e}. "
+            f"Ensure you are on {system_config.display_name} login node "
+            f"or set BOREALIS_MOCK_PBS=1 for local development.",
+            getattr(e, 'errno', None)
+        ) from e
+
+
+def validate_pbs_connection(system_config: SystemConfig) -> bool:
+    """
+    Validate PBS connection is available.
+
+    Args:
+        system_config: System configuration object
+
+    Returns:
+        True if connection successful, False otherwise
+    """
+    try:
+        with get_pbs_client(system_config) as pbs:
+            pbs.stat_server()
+        return True
+    except PBSException:
+        return False
+```
 
 ### 1. Server Entry Point (`server.py`)
 
@@ -106,6 +498,7 @@ The main FastMCP server that orchestrates all components and manages system conf
 import os
 import sys
 import socket
+import logging
 from fastmcp import FastMCP
 from pathlib import Path
 
@@ -114,15 +507,23 @@ from borealis_mcp.core.pbs_tools import register_pbs_tools
 from borealis_mcp.core.pbs_resources import register_pbs_resources
 from borealis_mcp.core.pbs_prompts import register_pbs_prompts
 from borealis_mcp.applications.registry import ApplicationRegistry
+from borealis_mcp.utils.logging import setup_logging
+
+# Setup logging
+logger = setup_logging()
 
 # Initialize MCP server
-mcp = FastMCP("Borealis MCP", version="1.0.0")
+mcp = FastMCP("Borealis MCP", version="0.1.0")
 
 # Load system configurations
 config_loader = SystemConfigLoader()
 
-# Load server config (for default_system, etc.)
+# Load server config (for default_system, logging settings, etc.)
 server_config = config_loader.load_server_config()
+
+# Apply logging level from config
+log_level = server_config.get('logging', {}).get('level', 'INFO')
+logging.getLogger('borealis_mcp').setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
 # Determine current system
 # Priority: 1) BOREALIS_SYSTEM env var, 2) borealis.yaml default, 3) auto-detect, 4) first available
@@ -150,9 +551,13 @@ if not current_system_name:
 config_loader.set_current_system(current_system_name)
 current_system = config_loader.get_current_system()
 
-print(f"Borealis MCP initialized for {current_system.display_name}", file=sys.stderr)
-print(f"Available systems: {', '.join(config_loader.list_available_systems())}", 
-      file=sys.stderr)
+logger.info(f"Borealis MCP initialized for {current_system.display_name}")
+logger.info(f"Available systems: {', '.join(config_loader.list_available_systems())}")
+
+# Check for mock mode
+from borealis_mcp.core.mock_pbs_client import is_mock_mode
+if is_mock_mode():
+    logger.warning("Running in MOCK PBS mode - no real PBS operations will be performed")
 
 # Register core PBS capabilities (pass system config)
 register_pbs_tools(mcp, current_system)
@@ -164,8 +569,48 @@ registry = ApplicationRegistry()
 registry.discover_applications()
 registry.register_all(mcp, current_system, config_loader)
 
+
+def main():
+    """Entry point for the Borealis MCP server"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Borealis MCP Server')
+    parser.add_argument(
+        '--transport',
+        choices=['stdio', 'http'],
+        default='stdio',
+        help='Transport protocol (stdio for local, http for remote)'
+    )
+    parser.add_argument(
+        '--host',
+        default='127.0.0.1',
+        help='Host to bind to (only for HTTP transport)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=9000,
+        help='Port to bind to (only for HTTP transport)'
+    )
+    parser.add_argument(
+        '--path',
+        default='/mcp',
+        help='URL path for MCP endpoint (only for HTTP transport)'
+    )
+
+    args = parser.parse_args()
+
+    if args.transport == 'http':
+        logger.info(f"Starting Borealis MCP in HTTP mode on {args.host}:{args.port}{args.path}")
+        logger.info("Make sure your SSH tunnel is configured to forward this port")
+        mcp.run(transport='http', host=args.host, port=args.port, path=args.path)
+    else:
+        logger.info("Starting Borealis MCP in STDIO mode")
+        mcp.run(transport='stdio')
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    main()
 ```
 
 **Key Features:**
@@ -819,11 +1264,7 @@ Handles all PBS-specific operations using your existing `pbs-python-api`.
 ```python
 from contextlib import contextmanager
 from typing import Optional
-import os
-import sys
 
-# Add pbs-python-api to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../external/pbs-python-api'))
 from pbs_api import PBSClient, PBSException
 
 from borealis_mcp.config.system import SystemConfig
@@ -832,20 +1273,20 @@ from borealis_mcp.config.system import SystemConfig
 def get_pbs_client(system_config: SystemConfig, server: Optional[str] = None):
     """
     Context manager for PBS client connections.
-    
+
     Args:
         system_config: System configuration object
         server: PBS server hostname (defaults to system config)
     """
     server = server or system_config.pbs_server
-    
+
     with PBSClient(server=server) as client:
         yield client
 
 def validate_pbs_connection(system_config: SystemConfig) -> bool:
     """
     Validate PBS connection is available.
-    
+
     Args:
         system_config: System configuration object
     """
@@ -861,6 +1302,7 @@ def validate_pbs_connection(system_config: SystemConfig) -> bool:
 ```python
 from fastmcp import FastMCP
 from typing import Dict, Any, Optional, List
+from pbs_api import PBSException
 from borealis_mcp.config.system import SystemConfig
 from borealis_mcp.core.pbs_client import get_pbs_client
 from borealis_mcp.utils.validation import validate_job_id, validate_walltime
@@ -1004,6 +1446,7 @@ def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig):
 from fastmcp import FastMCP
 from borealis_mcp.config.system import SystemConfig, SystemConfigLoader
 from borealis_mcp.core.pbs_client import get_pbs_client
+from pbs_api import JobInfo, QueueInfo
 
 def register_pbs_resources(mcp: FastMCP, system_config: SystemConfig, 
                           config_loader: SystemConfigLoader):
@@ -1047,10 +1490,11 @@ def register_pbs_resources(mcp: FastMCP, system_config: SystemConfig,
     @mcp.resource("pbs://systems/all")
     def list_all_systems() -> str:
         """List all available system configurations"""
-        systems = config_loader.discover_all_systems()
-        
+        system_names = config_loader.list_available_systems()
+
         lines = ["# Available HPC Systems\n"]
-        for name, config in systems.items():
+        for name in system_names:
+            config = config_loader.load_system(name)
             current = " (CURRENT)" if name == system_config.name else ""
             lines.append(f"## {config.display_name}{current}")
             lines.append(f"- Name: {name}")
@@ -1059,7 +1503,7 @@ def register_pbs_resources(mcp: FastMCP, system_config: SystemConfig,
             lines.append(f"- GPUs/Node: {config.gpus_per_node}")
             lines.append(f"- GPU Type: {config.gpu_type}")
             lines.append("")
-        
+
         return '\n'.join(lines)
     
     @mcp.resource("pbs://job/{job_id}")
@@ -1185,7 +1629,7 @@ Modular, extensible application-specific tools.
 #### `base.py` - Application Interface
 ```python
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastmcp import FastMCP
 from borealis_mcp.config.system import SystemConfig
 
@@ -1340,6 +1784,7 @@ class ApplicationRegistry:
 
 #### `hello_world/__init__.py` - Hello World Application
 ```python
+import os
 from fastmcp import FastMCP
 from borealis_mcp.applications.base import ApplicationBase
 from borealis_mcp.applications.hello_world.templates import HelloWorldTemplates
@@ -1348,27 +1793,27 @@ from typing import Dict, Any, Optional
 
 class Application(ApplicationBase):
     """Simple MPI hello world application for testing and demonstration"""
-    
+
     @property
     def name(self) -> str:
         return "hello_world"
-    
+
     @property
     def description(self) -> str:
         return "MPI Hello World - prints rank and hostname from each MPI process"
-    
+
     def supports_system(self, system_config: SystemConfig) -> bool:
         """Hello world works on any system"""
         return True
-    
+
     def register_tools(
-        self, 
-        mcp: FastMCP, 
+        self,
+        mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None
     ):
         """Register hello_world-specific tools"""
-        
+
         # Get settings from app config or use defaults
         if app_config:
             modules = app_config.get('modules', system_config.recommended_modules)
@@ -1385,33 +1830,44 @@ class Application(ApplicationBase):
             env_vars = {}
             default_walltime = '00:30:00'
             default_queue = 'debug'
-        
+
+        # Get default account from environment
+        default_account = os.environ.get('PBS_ACCOUNT', '')
+
         @mcp.tool()
         def build_hello_world_submit_script(
             script_path: str,
             num_nodes: int,
             ranks_per_node: int,
+            account: str = default_account,
             walltime: str = default_walltime,
             queue: str = default_queue,
             job_name: str = "hello_world"
         ) -> str:
             """
             Generate PBS submit script for MPI Hello World.
-            
+
             Prints rank number and hostname from each MPI process.
             Automatically adapts to the current system configuration.
-            
+
             Args:
                 script_path: Where to save the submit script
                 num_nodes: Number of nodes to use
                 ranks_per_node: MPI ranks per node
+                account: PBS account/project name (defaults to PBS_ACCOUNT env var)
                 walltime: Wall time in HH:MM:SS format
                 queue: Queue name
                 job_name: Name for the PBS job
-                
+
             Returns:
                 Path to generated submit script
             """
+            if not account:
+                raise ValueError(
+                    "account is required. Set PBS_ACCOUNT environment variable "
+                    "or pass account parameter explicitly."
+                )
+
             template = HelloWorldTemplates.generate_submit_script(
                 system_config=system_config,
                 num_nodes=num_nodes,
@@ -1419,22 +1875,23 @@ class Application(ApplicationBase):
                 walltime=walltime,
                 queue=queue,
                 job_name=job_name,
+                account=account,
                 modules=modules,
                 mpi_command=mpi_command,
                 mpi_flags=mpi_flags,
                 env_vars=env_vars
             )
-            
+
             with open(script_path, 'w') as f:
                 f.write(template)
-            
+
             return script_path
-        
+
         @mcp.tool()
         def get_hello_world_info() -> Dict[str, Any]:
             """
             Get information about hello_world configuration for current system.
-            
+
             Returns:
                 Dictionary with system-specific settings and recommendations
             """
@@ -1447,14 +1904,15 @@ class Application(ApplicationBase):
                 "environment": env_vars,
                 "defaults": {
                     "walltime": default_walltime,
-                    "queue": default_queue
+                    "queue": default_queue,
+                    "account": default_account or "(set PBS_ACCOUNT env var)"
                 },
                 "recommended_usage": {
                     "min_nodes": 1,
                     "max_nodes": system_config.queues.get(default_queue).max_nodes if default_queue in system_config.queues else "unknown",
                     "typical_ranks_per_node": system_config.cores_per_node
                 },
-                "example": f"build_hello_world_submit_script(script_path='submit.sh', num_nodes=2, ranks_per_node=4)"
+                "example": f"build_hello_world_submit_script(script_path='submit.sh', num_nodes=2, ranks_per_node=4, account='myproject')"
             }
 ```
 
@@ -1465,7 +1923,7 @@ from typing import Dict, Any, List
 
 class HelloWorldTemplates:
     """PBS submit script templates for Hello World"""
-    
+
     @staticmethod
     def generate_submit_script(
         system_config: SystemConfig,
@@ -1474,6 +1932,7 @@ class HelloWorldTemplates:
         walltime: str,
         queue: str,
         job_name: str,
+        account: str,
         modules: List[str],
         mpi_command: str,
         mpi_flags: List[str],
@@ -1481,32 +1940,32 @@ class HelloWorldTemplates:
     ) -> str:
         """
         Generate MPI Hello World submit script.
-        
+
         The script prints rank number and hostname from each MPI process.
         """
-        
+
         # Build module load commands
         module_cmds = '\n'.join([f"module load {mod}" for mod in modules])
-        
+
         # Build environment variable exports
         env_cmds = '\n'.join([f"export {key}={value}" for key, value in env_vars.items()])
         env_section = env_cmds if env_cmds else "# No additional environment variables"
-        
+
         # Build MPI flags string
         flags_str = ' '.join(mpi_flags) if mpi_flags else ''
-        
+
         # Default filesystems
         default_fs = ':'.join(system_config.default_filesystems)
-        
+
         # Calculate total ranks
         total_ranks = num_nodes * ranks_per_node
-        
+
         return f"""#!/bin/bash -l
 #PBS -l select={num_nodes}:ncpus={system_config.cores_per_node}
 #PBS -l walltime={walltime}
 #PBS -l filesystems={default_fs}
 #PBS -q {queue}
-#PBS -A <PROJECT>
+#PBS -A {account}
 #PBS -N {job_name}
 
 # System: {system_config.display_name}
@@ -1541,6 +2000,7 @@ echo "Hello World completed successfully"
 
 #### `generic/__init__.py` - Generic Application
 ```python
+import os
 from fastmcp import FastMCP
 from borealis_mcp.applications.base import ApplicationBase
 from borealis_mcp.applications.generic.templates import GenericTemplates
@@ -1549,64 +2009,237 @@ from typing import Optional, Dict, Any
 
 class Application(ApplicationBase):
     """Generic job support for arbitrary executables"""
-    
+
     @property
     def name(self) -> str:
         return "generic"
-    
+
     @property
     def description(self) -> str:
         return "Generic PBS job submission for any executable"
-    
+
     def register_tools(
-        self, 
-        mcp: FastMCP, 
+        self,
+        mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None
     ):
         """Register generic tools"""
-        
+
+        # Get default account from environment
+        default_account = os.environ.get('PBS_ACCOUNT', '')
+
         @mcp.tool()
         def build_generic_submit_script(
             script_path: str,
             executable: str,
+            account: str = default_account,
             arguments: str = "",
             num_nodes: int = 1,
             mpi_ranks_per_node: int = 1,
+            walltime: str = "01:00:00",
+            queue: str = "debug",
+            job_name: str = "generic_job",
             environment_setup: str = ""
         ) -> str:
             """
             Generate basic PBS submit script for any executable.
-            
+
             Args:
                 script_path: Where to save submit script
                 executable: Path to executable or command
+                account: PBS account/project name (defaults to PBS_ACCOUNT env var)
                 arguments: Command-line arguments
                 num_nodes: Number of nodes
                 mpi_ranks_per_node: MPI ranks per node
+                walltime: Wall time in HH:MM:SS format
+                queue: Queue name
+                job_name: Name for the PBS job
                 environment_setup: Custom environment commands
-                
+
             Returns:
                 Path to generated submit script
             """
-            template = GenericTemplates.get_basic_template(
+            if not account:
+                raise ValueError(
+                    "account is required. Set PBS_ACCOUNT environment variable "
+                    "or pass account parameter explicitly."
+                )
+
+            template = GenericTemplates.generate_submit_script(
                 system_config=system_config,
                 executable=executable,
                 arguments=arguments,
+                account=account,
                 num_nodes=num_nodes,
                 mpi_ranks_per_node=mpi_ranks_per_node,
+                walltime=walltime,
+                queue=queue,
+                job_name=job_name,
                 environment_setup=environment_setup
             )
-            
+
             with open(script_path, 'w') as f:
                 f.write(template)
-            
+
             return script_path
+```
+
+#### `generic/templates.py`
+```python
+from borealis_mcp.config.system import SystemConfig
+
+class GenericTemplates:
+    """PBS submit script templates for generic jobs"""
+
+    @staticmethod
+    def generate_submit_script(
+        system_config: SystemConfig,
+        executable: str,
+        arguments: str,
+        account: str,
+        num_nodes: int,
+        mpi_ranks_per_node: int,
+        walltime: str,
+        queue: str,
+        job_name: str,
+        environment_setup: str
+    ) -> str:
+        """
+        Generate a generic PBS submit script.
+
+        Args:
+            system_config: System configuration
+            executable: Path to executable or command
+            arguments: Command-line arguments
+            account: PBS account/project name
+            num_nodes: Number of nodes
+            mpi_ranks_per_node: MPI ranks per node
+            walltime: Wall time in HH:MM:SS format
+            queue: Queue name
+            job_name: Name for the PBS job
+            environment_setup: Custom environment setup commands
+
+        Returns:
+            Complete PBS submit script as string
+        """
+        # Default filesystems
+        default_fs = ':'.join(system_config.default_filesystems)
+
+        # Calculate total ranks
+        total_ranks = num_nodes * mpi_ranks_per_node
+
+        # Build module load commands from system recommendations
+        module_cmds = '\n'.join(
+            [f"module load {mod}" for mod in system_config.recommended_modules]
+        )
+
+        # Environment setup section
+        env_section = environment_setup if environment_setup else "# No custom environment setup"
+
+        return f"""#!/bin/bash -l
+#PBS -l select={num_nodes}:ncpus={system_config.cores_per_node}
+#PBS -l walltime={walltime}
+#PBS -l filesystems={default_fs}
+#PBS -q {queue}
+#PBS -A {account}
+#PBS -N {job_name}
+
+# System: {system_config.display_name}
+# Generated by Borealis MCP
+
+cd $PBS_O_WORKDIR
+
+# Load recommended modules
+{module_cmds}
+
+# Custom environment setup
+{env_section}
+
+# Job parameters
+NNODES={num_nodes}
+NRANKS_PER_NODE={mpi_ranks_per_node}
+NTOTRANKS={total_ranks}
+
+echo "Starting job on $NNODES nodes"
+echo "System: {system_config.display_name}"
+echo "Executable: {executable}"
+echo ""
+
+# Run the executable
+mpiexec -n $NTOTRANKS -ppn $NRANKS_PER_NODE {executable} {arguments}
+
+echo ""
+echo "Job completed"
+"""
+```
 ```
 
 ### 5. Utilities (`utils/`)
 
 Common utility functions.
+
+#### `logging.py`
+```python
+"""
+Logging configuration for Borealis MCP.
+"""
+
+import logging
+import sys
+from typing import Optional
+
+
+def setup_logging(
+    level: str = "INFO",
+    format_string: Optional[str] = None
+) -> logging.Logger:
+    """
+    Configure logging for Borealis MCP.
+
+    Args:
+        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        format_string: Optional custom format string
+
+    Returns:
+        Configured logger instance
+    """
+    if format_string is None:
+        format_string = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    # Create logger
+    logger = logging.getLogger("borealis_mcp")
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    # Avoid duplicate handlers
+    if not logger.handlers:
+        # Create stderr handler (MCP uses stdout for protocol)
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.DEBUG)
+
+        # Create formatter
+        formatter = logging.Formatter(format_string, datefmt="%Y-%m-%d %H:%M:%S")
+        handler.setFormatter(formatter)
+
+        logger.addHandler(handler)
+
+    return logger
+
+
+def get_logger(name: str = None) -> logging.Logger:
+    """
+    Get a logger instance.
+
+    Args:
+        name: Optional sub-logger name (e.g., "pbs_tools")
+
+    Returns:
+        Logger instance
+    """
+    if name:
+        return logging.getLogger(f"borealis_mcp.{name}")
+    return logging.getLogger("borealis_mcp")
+```
 
 #### `validation.py`
 ```python
@@ -1648,36 +2281,59 @@ def validate_node_count(nodes: int, max_nodes: int) -> None:
 #### `formatting.py`
 ```python
 from typing import Dict, Any, List
+from pbs_api import JobInfo, QueueInfo
 
-def format_job_status(job: Dict[str, Any]) -> Dict[str, Any]:
-    """Format job status for MCP response"""
+def format_job_status(job: JobInfo) -> Dict[str, Any]:
+    """
+    Format job status for MCP response.
+
+    Args:
+        job: JobInfo dataclass from pbs_api (has .name and .attrs dict)
+    """
+    attrs = job.attrs
+    resource_list = {}
+    resources_used = {}
+
+    # Parse Resource_List entries (they come as separate keys like Resource_List.walltime)
+    for key, value in attrs.items():
+        if key.startswith('Resource_List.'):
+            resource_list[key.split('.', 1)[1]] = value
+        elif key.startswith('resources_used.'):
+            resources_used[key.split('.', 1)[1]] = value
+
     return {
-        'job_id': job.get('Job_Id'),
-        'name': job.get('Job_Name'),
-        'state': job.get('job_state'),
-        'queue': job.get('queue'),
-        'account': job.get('Account_Name'),
+        'job_id': job.name,
+        'name': attrs.get('Job_Name'),
+        'state': attrs.get('job_state'),
+        'queue': attrs.get('queue'),
+        'account': attrs.get('Account_Name'),
         'walltime': {
-            'requested': job.get('Resource_List', {}).get('walltime'),
-            'used': job.get('resources_used', {}).get('walltime')
+            'requested': resource_list.get('walltime'),
+            'used': resources_used.get('walltime')
         },
         'nodes': {
-            'requested': job.get('Resource_List', {}).get('select'),
-            'assigned': job.get('exec_host')
+            'requested': resource_list.get('select'),
+            'assigned': attrs.get('exec_host')
         }
     }
 
-def format_queue_summary(queues: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Format queue summary for MCP response"""
+def format_queue_summary(queues: List[QueueInfo]) -> Dict[str, Any]:
+    """
+    Format queue summary for MCP response.
+
+    Args:
+        queues: List of QueueInfo dataclasses from pbs_api
+    """
     result = {}
     for queue in queues:
-        result[queue['name']] = {
-            'enabled': queue.get('enabled'),
-            'started': queue.get('started'),
-            'total_jobs': queue.get('total_jobs', 0),
-            'state_count': queue.get('state_count', {}),
-            'max_walltime': queue.get('resources_max', {}).get('walltime'),
-            'max_nodes': queue.get('resources_max', {}).get('nodect')
+        attrs = queue.attrs
+        result[queue.name] = {
+            'enabled': attrs.get('enabled'),
+            'started': attrs.get('started'),
+            'total_jobs': int(attrs.get('total_jobs', 0)),
+            'state_count': attrs.get('state_count', {}),
+            'max_walltime': attrs.get('resources_max.walltime'),
+            'max_nodes': attrs.get('resources_max.nodect')
         }
     return result
 ```
@@ -1688,9 +2344,45 @@ class BorealisError(Exception):
     """Base exception for Borealis MCP"""
     pass
 
-class ValidationError(BorealisError):
-    """Validation error"""
+class ConfigurationError(BorealisError):
+    """Configuration error (missing files, invalid YAML, etc.)"""
     pass
+
+class ValidationError(BorealisError):
+    """Input validation error"""
+    pass
+
+class AccountNotConfiguredError(ValidationError):
+    """
+    PBS account not configured.
+
+    Raised when PBS_ACCOUNT environment variable is not set
+    and no account is provided explicitly.
+    """
+    def __init__(self, message: str = None):
+        default_message = (
+            "PBS account not configured. "
+            "Set the PBS_ACCOUNT environment variable to your project allocation name. "
+            "Example: export PBS_ACCOUNT=myproject"
+        )
+        super().__init__(message or default_message)
+
+class PBSConnectionError(BorealisError):
+    """
+    PBS connection failed.
+
+    Raised when unable to connect to PBS server.
+    """
+    def __init__(self, server: str, system_name: str, original_error: str = None):
+        message = (
+            f"Failed to connect to PBS server '{server}'. "
+            f"Ensure you are on a {system_name} login node with PBS access. "
+        )
+        if original_error:
+            message += f"Details: {original_error}"
+        super().__init__(message)
+        self.server = server
+        self.system_name = system_name
 
 class PBSOperationError(BorealisError):
     """PBS operation failed"""
@@ -1699,6 +2391,20 @@ class PBSOperationError(BorealisError):
 class ApplicationError(BorealisError):
     """Application-specific error"""
     pass
+
+class SystemNotFoundError(ConfigurationError):
+    """
+    System configuration not found.
+
+    Raised when a requested system has no YAML configuration.
+    """
+    def __init__(self, system_name: str, available_systems: list = None):
+        message = f"System '{system_name}' not found."
+        if available_systems:
+            message += f" Available systems: {", ".join(available_systems)}"
+        super().__init__(message)
+        self.system_name = system_name
+        self.available_systems = available_systems or []
 ```
 
 ## Agent Workflow Examples
@@ -1716,13 +2422,14 @@ Agent workflow:
      "mpi_command": "mpiexec",
      "mpi_flags": ["--cpu-bind", "depth"],
      "modules": ["frameworks", "mpich/icc-all-pmix-gpu/20240625"],
-     "defaults": {"walltime": "00:30:00", "queue": "debug"}
+     "defaults": {"walltime": "00:30:00", "queue": "debug", "account": "datascience"}
    }
 
 2. build_hello_world_submit_script(
      script_path="/home/user/submit_hello.sh",
      num_nodes=128,
      ranks_per_node=6,
+     account="datascience",
      walltime="00:30:00",
      queue="debug",
      job_name="hello_world_128nodes"
@@ -2005,8 +2712,6 @@ def test_pytorch_script_generation():
     assert "frameworks" in script
     assert "conda activate" in script
 ```
-
-## Deployment
 
 ## Deployment
 
