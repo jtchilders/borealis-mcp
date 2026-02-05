@@ -1,0 +1,67 @@
+name: sunspot
+display_name: "Sunspot"
+facility: "Argonne Leadership Computing Facility (ALCF)"
+pbs_server: sunspot-pbs.alcf.anl.gov
+
+hardware:
+  total_nodes: 128
+  cores_per_node: 208
+  gpus_per_node: 12
+  gpu_type: "Intel Data Center GPU Max 1550"
+  memory_per_node: 512
+  memory_type: "HBM2e"
+  cpu_model: "Intel Xeon CPU Max 9470C"
+  interconnect: "HPE Slingshot 11"
+
+queues:
+  debug:
+    max_walltime: "01:00:00"
+    max_nodes: 8
+    node_types: ["compute"]
+    filesystems: ["gila", "home"]
+    description: "Quick testing and development"
+    default_place: "scatter"
+    priority: 100
+
+  workq:
+    max_walltime: "06:00:00"
+    max_nodes: 64
+    node_types: ["compute"]
+    filesystems: ["gila", "home"]
+    description: "Standard work queue"
+    default_place: "scatter"
+    priority: 50
+
+  prod:
+    max_walltime: "12:00:00"
+    max_nodes: 128
+    node_types: ["compute"]
+    filesystems: ["gila", "home"]
+    description: "Production queue"
+    default_place: "scatter"
+    priority: 30
+
+filesystems:
+  home: "/home"
+  gila: "/lus/gila/projects"
+
+default_filesystems:
+  - "gila"
+  - "home"
+
+recommended_modules:
+  - "frameworks"
+
+custom_settings:
+  mpi:
+    command: "mpiexec"
+    flags:
+      - "--cpu-bind"
+      - "depth"
+  gpu:
+    tiles_per_gpu: 2
+    total_tiles_per_node: 24
+  environment:
+    ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+    MPICH_GPU_SUPPORT_ENABLED: "1"
+  notes: "Sunspot is the Aurora test/development system"

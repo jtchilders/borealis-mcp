@@ -1,0 +1,86 @@
+name: aurora
+display_name: "Aurora"
+facility: "Argonne Leadership Computing Facility (ALCF)"
+pbs_server: aurora-pbs-0.hsn.aurora.alcf.anl.gov
+
+hardware:
+  total_nodes: 10624
+  cores_per_node: 208
+  gpus_per_node: 12
+  gpu_type: "Intel Data Center GPU Max 1550"
+  memory_per_node: 512
+  memory_type: "HBM2e"
+  cpu_model: "Intel Xeon CPU Max 9470C"
+  interconnect: "HPE Slingshot 11"
+
+queues:
+  debug:
+    max_walltime: "01:00:00"
+    max_nodes: 8
+    node_types: ["compute"]
+    filesystems: ["flare", "home"]
+    description: "Quick testing and development"
+    default_place: "scatter"
+    priority: 100
+
+  debug-scaling:
+    max_walltime: "01:00:00"
+    max_nodes: 128
+    node_types: ["compute"]
+    filesystems: ["flare", "home"]
+    description: "Scaling tests"
+    default_place: "scatter"
+    priority: 90
+
+  workq:
+    max_walltime: "06:00:00"
+    max_nodes: 496
+    node_types: ["compute"]
+    filesystems: ["flare", "home"]
+    description: "Standard production queue"
+    default_place: "scatter"
+    priority: 50
+
+  prod:
+    max_walltime: "24:00:00"
+    max_nodes: 4096
+    node_types: ["compute"]
+    filesystems: ["flare", "home"]
+    description: "Large-scale production jobs"
+    default_place: "scatter"
+    priority: 30
+
+  lustre_scaling:
+    max_walltime: "01:00:00"
+    max_nodes: 928
+    node_types: ["compute"]
+    filesystems: ["flare", "home"]
+    description: "Lustre scaling tests"
+    default_place: "scatter"
+    priority: 80
+
+filesystems:
+  home: "/home"
+  flare: "/lus/flare"
+  grand: "/lus/grand"
+  eagle: "/lus/eagle"
+
+default_filesystems:
+  - "flare"
+  - "home"
+
+recommended_modules:
+  - "frameworks"
+
+custom_settings:
+  mpi:
+    command: "mpiexec"
+    flags:
+      - "--cpu-bind"
+      - "depth"
+  gpu:
+    tiles_per_gpu: 2
+    total_tiles_per_node: 24
+  environment:
+    ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+    MPICH_GPU_SUPPORT_ENABLED: "1"

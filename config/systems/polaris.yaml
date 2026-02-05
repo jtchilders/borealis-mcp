@@ -1,0 +1,87 @@
+name: polaris
+display_name: "Polaris"
+facility: "Argonne Leadership Computing Facility (ALCF)"
+pbs_server: polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov
+
+hardware:
+  total_nodes: 560
+  cores_per_node: 32
+  gpus_per_node: 4
+  gpu_type: "NVIDIA A100"
+  memory_per_node: 512
+  memory_type: "DDR4"
+  cpu_model: "AMD EPYC Milan"
+  interconnect: "HPE Slingshot 10"
+
+queues:
+  debug:
+    max_walltime: "01:00:00"
+    max_nodes: 8
+    node_types: ["compute"]
+    filesystems: ["grand", "eagle", "home"]
+    description: "Quick testing and development"
+    default_place: "scatter"
+    priority: 100
+
+  debug-scaling:
+    max_walltime: "01:00:00"
+    max_nodes: 24
+    node_types: ["compute"]
+    filesystems: ["grand", "eagle", "home"]
+    description: "Scaling tests"
+    default_place: "scatter"
+    priority: 90
+
+  preemptable:
+    max_walltime: "72:00:00"
+    max_nodes: 10
+    node_types: ["compute"]
+    filesystems: ["grand", "eagle", "home"]
+    description: "Preemptable jobs (can be interrupted)"
+    default_place: "scatter"
+    priority: 10
+
+  prod:
+    max_walltime: "24:00:00"
+    max_nodes: 496
+    node_types: ["compute"]
+    filesystems: ["grand", "eagle", "home"]
+    description: "Production queue"
+    default_place: "scatter"
+    priority: 50
+
+  demand:
+    max_walltime: "01:00:00"
+    max_nodes: 560
+    node_types: ["compute"]
+    filesystems: ["grand", "eagle", "home"]
+    description: "On-demand jobs"
+    default_place: "scatter"
+    priority: 70
+
+filesystems:
+  home: "/home"
+  grand: "/lus/grand/projects"
+  eagle: "/lus/eagle/projects"
+
+default_filesystems:
+  - "grand"
+  - "eagle"
+  - "home"
+
+recommended_modules:
+  - "conda"
+  - "cudatoolkit-standalone"
+  - "cray-mpich"
+
+custom_settings:
+  mpi:
+    command: "mpiexec"
+    flags:
+      - "--cpu-bind"
+      - "core"
+  gpu:
+    cuda_visible_devices: "0,1,2,3"
+  environment:
+    MPICH_GPU_SUPPORT_ENABLED: "1"
+    CUDA_VISIBLE_DEVICES: "0,1,2,3"

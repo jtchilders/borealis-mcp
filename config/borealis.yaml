@@ -1,0 +1,29 @@
+# Borealis MCP Server Configuration
+
+# Default system to use if not auto-detected or specified via environment
+# Options: aurora, polaris, sunspot
+default_system: aurora
+
+# Logging configuration
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Server settings
+server:
+  name: "Borealis MCP"
+  version: "0.1.0"
+
+# Application settings
+applications:
+  # Enable auto-discovery of applications
+  auto_discover: true
+
+  # List of applications to disable (by name)
+  # disabled:
+  #   - some_app
+
+# Default PBS settings (can be overridden per-system)
+defaults:
+  walltime: "01:00:00"
+  queue: debug
+  filesystems: null  # Use system defaults
