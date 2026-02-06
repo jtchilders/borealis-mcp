@@ -62,7 +62,8 @@ class HelloWorldTemplates:
         total_ranks = num_nodes * ranks_per_node
 
         return f"""#!/bin/bash -l
-#PBS -l select={num_nodes}:ncpus={system_config.cores_per_node}
+#PBS -l select={num_nodes}
+#PBS -l place=scatter
 #PBS -l walltime={walltime}
 #PBS -l filesystems={default_fs}
 #PBS -q {queue}
