@@ -22,14 +22,12 @@ if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
 fi
 
 # Add pbs-python-api to PYTHONPATH if using the bundled version
-if [ -d "$SCRIPT_DIR/external/pbs-python-api/src" ]; then
-    export PYTHONPATH="$SCRIPT_DIR/external/pbs-python-api/src:$PYTHONPATH"
+if [ -d "$SCRIPT_DIR/external/pbs-python-api" ]; then
+    export PYTHONPATH="$SCRIPT_DIR/external/pbs-python-api:$PYTHONPATH"
 fi
 
-# Also check for system PBS Python bindings (fallback)
-if [ -d "/opt/pbs/lib/python/altair" ]; then
-    export PYTHONPATH="$PYTHONPATH:/opt/pbs/lib/python/altair"
-fi
+# Add system PBS Python bindings path (required on ALCF systems)
+export PYTHONPATH="$PYTHONPATH:/opt/pbs/lib/python/altair"
 
 case "$SYSTEM" in
     aurora)
