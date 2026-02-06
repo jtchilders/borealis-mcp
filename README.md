@@ -17,9 +17,12 @@ Borealis enables AI agents like Claude to submit and manage PBS jobs, query syst
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/argonne-lcf/borealis-mcp.git
+# Clone the repository with submodules
+git clone --recursive https://github.com/argonne-lcf/borealis-mcp.git
 cd borealis-mcp
+
+# If you already cloned without --recursive, initialize submodules:
+git submodule update --init --recursive
 
 # Create virtual environment (Python 3.10+)
 python3 -m venv venv
@@ -46,18 +49,26 @@ python -m borealis_mcp.server --mock
 
 ### Running on ALCF Systems
 
-On Aurora, Polaris, or Sunspot login nodes:
+On Aurora, Polaris, or Sunspot login nodes, use the provided startup script:
 
 ```bash
-# Set your project allocation
-export PBS_ACCOUNT=your_project
+# Run on Aurora (default)
+source start_borealis.sh
 
-# System is auto-detected, or set explicitly
-export BOREALIS_SYSTEM=aurora
+# Or specify the system explicitly
+source start_borealis.sh aurora
+source start_borealis.sh polaris
+source start_borealis.sh sunspot
 
-# Run the server
-python -m borealis_mcp.server
+# Override the default account if needed
+PBS_ACCOUNT=my_project source start_borealis.sh aurora
 ```
+
+The `start_borealis.sh` script automatically:
+- Activates the virtual environment
+- Sets `PBS_SERVER` for the target system
+- Adds the bundled `pbs-python-api` to `PYTHONPATH`
+- Launches the MCP server
 
 ## Claude Code Integration
 
@@ -79,7 +90,7 @@ Add to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json` on 
 
 ### On ALCF Login Nodes (Direct Access)
 
-If you have direct SSH access to ALCF systems:
+If you have direct SSH access to ALCF systems, use the startup script:
 
 ```json
 {
@@ -88,7 +99,23 @@ If you have direct SSH access to ALCF systems:
       "command": "ssh",
       "args": [
         "aurora.alcf.anl.gov",
-        "cd /path/to/borealis-mcp && source venv/bin/activate && PBS_ACCOUNT=your_project python -m borealis_mcp.server"
+        "cd /path/to/borealis-mcp && source ./start_borealis.sh"
+      ]
+    }
+  }
+}
+```
+
+Or specify a different system:
+
+```json
+{
+  "mcpServers": {
+    "borealis": {
+      "command": "ssh",
+      "args": [
+        "polaris.alcf.anl.gov",
+        "cd /path/to/borealis-mcp && source ./start_borealis.sh polaris"
       ]
     }
   }
