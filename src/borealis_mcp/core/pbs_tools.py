@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 from borealis_mcp.config.constants import ENV_PBS_ACCOUNT
 from borealis_mcp.config.system import SystemConfig
 from borealis_mcp.core.pbs_client import get_pbs_client, get_pbs_exception_class
+from borealis_mcp.core.workspace import WorkspaceManager
 from borealis_mcp.utils.errors import PBSOperationError, ValidationError
 from borealis_mcp.utils.formatting import format_job_list, format_job_status
 from borealis_mcp.utils.logging import get_logger
@@ -22,13 +23,18 @@ from borealis_mcp.utils.validation import (
 logger = get_logger("pbs_tools")
 
 
-def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig) -> None:
+def register_pbs_tools(
+    mcp: FastMCP,
+    system_config: SystemConfig,
+    workspace_manager: Optional[WorkspaceManager] = None,
+) -> None:
     """
     Register core PBS tools with the MCP server.
 
     Args:
         mcp: FastMCP server instance
         system_config: Current system configuration
+        workspace_manager: Optional workspace manager for job workspaces
     """
     # Get default account from environment
     default_account = os.environ.get(ENV_PBS_ACCOUNT, "")
@@ -36,7 +42,8 @@ def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig) -> None:
 
     @mcp.tool()
     def submit_pbs_job(
-        script_path: str,
+        script_path: Optional[str] = None,
+        workspace_id: Optional[str] = None,
         queue: Optional[str] = None,
         job_name: Optional[str] = None,
         account: str = default_account,
@@ -47,8 +54,13 @@ def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig) -> None:
         """
         Submit a PBS job from a script file.
 
+        You can specify either script_path or workspace_id:
+        - script_path: Direct path to the PBS submit script
+        - workspace_id: ID of a workspace containing a submit script
+
         Args:
             script_path: Path to the PBS submit script
+            workspace_id: Workspace ID (alternative to script_path)
             queue: Queue to submit to (default: system default queue)
             job_name: Name for the job
             account: PBS account/project name (defaults to PBS_ACCOUNT env var)
@@ -59,6 +71,26 @@ def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig) -> None:
         Returns:
             Dictionary with job_id and submission status
         """
+        # Resolve script_path from workspace_id if provided
+        workspace_info = None
+        if workspace_id and workspace_manager:
+            workspace_info = workspace_manager.get_workspace(workspace_id)
+            if not workspace_info:
+                return {
+                    "error": f"Workspace {workspace_id} not found",
+                    "status": "failed",
+                }
+            if not workspace_info.script_path:
+                return {
+                    "error": f"Workspace {workspace_id} has no submit script",
+                    "status": "failed",
+                }
+            script_path = workspace_info.script_path
+        elif not script_path:
+            return {
+                "error": "Either script_path or workspace_id must be provided",
+                "status": "failed",
+            }
         # Validate account
         try:
             account = validate_account(account)
@@ -103,12 +135,25 @@ def register_pbs_tools(mcp: FastMCP, system_config: SystemConfig) -> None:
             with get_pbs_client(system_config) as pbs:
                 job_id = pbs.submit(script_path=script_path, queue=queue, attrs=attrs)
                 logger.info(f"Submitted job {job_id} to queue {queue}")
-                return {
+
+                # Update workspace if used
+                if workspace_info and workspace_manager:
+                    workspace_manager.update_workspace(
+                        workspace_info.workspace_id,
+                        status="submitted",
+                        job_id=job_id,
+                    )
+
+                result = {
                     "job_id": job_id,
                     "queue": queue,
                     "status": "submitted",
                     "system": system_config.display_name,
                 }
+                if workspace_info:
+                    result["workspace_id"] = workspace_info.workspace_id
+                    result["workspace_path"] = workspace_info.path
+                return result
         except PBSException as e:
             logger.error(f"Job submission failed: {e}")
             return {"error": str(e), "status": "failed"}

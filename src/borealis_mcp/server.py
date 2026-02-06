@@ -14,6 +14,7 @@ from borealis_mcp.config.system import SystemConfigLoader
 from borealis_mcp.core.mock_pbs_client import is_mock_mode
 from borealis_mcp.core.pbs_resources import register_pbs_resources
 from borealis_mcp.core.pbs_tools import register_pbs_tools
+from borealis_mcp.core.workspace_tools import register_workspace_tools
 from borealis_mcp.utils.logging import get_logger, setup_logging
 
 
@@ -94,14 +95,17 @@ def create_server(
             "Running in MOCK PBS mode - no real PBS operations will be performed"
         )
 
+    # Register workspace management tools first (other tools may need it)
+    workspace_manager = register_workspace_tools(mcp, current_system, config_loader)
+
     # Register core PBS capabilities
-    register_pbs_tools(mcp, current_system)
+    register_pbs_tools(mcp, current_system, workspace_manager)
     register_pbs_resources(mcp, current_system, config_loader)
 
     # Auto-discover and register applications
     registry = ApplicationRegistry()
     registry.discover_applications()
-    registry.register_all(mcp, current_system, config_loader)
+    registry.register_all(mcp, current_system, config_loader, workspace_manager)
 
     return mcp
 

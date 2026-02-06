@@ -1,7 +1,7 @@
 """Hello World MCP application."""
 
 import os
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastmcp import FastMCP
 
@@ -11,6 +11,9 @@ from borealis_mcp.config.constants import ENV_PBS_ACCOUNT
 from borealis_mcp.config.system import SystemConfig
 from borealis_mcp.utils.logging import get_logger
 from borealis_mcp.utils.validation import validate_account
+
+if TYPE_CHECKING:
+    from borealis_mcp.core.workspace import WorkspaceManager
 
 logger = get_logger("hello_world")
 
@@ -35,6 +38,7 @@ class Application(ApplicationBase):
         mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
     ) -> None:
         """Register hello_world-specific tools."""
 
@@ -62,9 +66,9 @@ class Application(ApplicationBase):
 
         @mcp.tool()
         def build_hello_world_submit_script(
-            script_path: str,
             num_nodes: int,
             ranks_per_node: int,
+            workspace_id: Optional[str] = None,
             account: str = default_account,
             walltime: str = default_walltime,
             queue: str = default_queue,
@@ -76,22 +80,58 @@ class Application(ApplicationBase):
             Prints rank number and hostname from each MPI process.
             Automatically adapts to the current system configuration.
 
+            The script is created in a job workspace. If no workspace_id is
+            provided, a new workspace will be created automatically.
+
             Args:
-                script_path: Where to save the submit script
                 num_nodes: Number of nodes to use
                 ranks_per_node: MPI ranks per node
+                workspace_id: Optional workspace ID (creates new workspace if not provided)
                 account: PBS account/project name (defaults to PBS_ACCOUNT env var)
                 walltime: Wall time in HH:MM:SS format
                 queue: Queue name
                 job_name: Name for the PBS job
 
             Returns:
-                Dictionary with script path and configuration details
+                Dictionary with workspace_id, script_path, and configuration details
             """
+            if workspace_manager is None:
+                return {
+                    "error": "Workspace manager not available",
+                    "status": "failed",
+                }
+
             try:
                 account = validate_account(account)
             except Exception as e:
                 return {"error": str(e), "status": "failed"}
+
+            # Get or create workspace
+            if workspace_id:
+                workspace_info = workspace_manager.get_workspace(workspace_id)
+                if not workspace_info:
+                    return {
+                        "error": f"Workspace {workspace_id} not found",
+                        "status": "failed",
+                    }
+            else:
+                # Create a new workspace
+                try:
+                    workspace_info = workspace_manager.create_workspace(
+                        job_name=job_name,
+                        metadata={
+                            "application": "hello_world",
+                            "num_nodes": num_nodes,
+                            "ranks_per_node": ranks_per_node,
+                        },
+                    )
+                except OSError as e:
+                    return {"error": f"Failed to create workspace: {e}", "status": "failed"}
+
+            # Generate script path in workspace
+            script_path = workspace_manager.get_script_path(
+                workspace_info.workspace_id, "submit.sh"
+            )
 
             template = HelloWorldTemplates.generate_submit_script(
                 system_config=system_config,
@@ -110,9 +150,17 @@ class Application(ApplicationBase):
             with open(script_path, "w") as f:
                 f.write(template)
 
+            # Update workspace with script path
+            workspace_manager.update_workspace(
+                workspace_info.workspace_id,
+                script_path=script_path,
+            )
+
             logger.info(f"Generated hello_world script: {script_path}")
 
             return {
+                "workspace_id": workspace_info.workspace_id,
+                "workspace_path": workspace_info.path,
                 "script_path": script_path,
                 "status": "created",
                 "system": system_config.display_name,
@@ -139,6 +187,10 @@ class Application(ApplicationBase):
                 default_queue_config.max_nodes if default_queue_config else "unknown"
             )
 
+            workspace_base = None
+            if workspace_manager:
+                workspace_base = str(workspace_manager.base_path)
+
             return {
                 "application": "hello_world",
                 "description": self.description,
@@ -152,14 +204,15 @@ class Application(ApplicationBase):
                     "queue": default_queue,
                     "account": default_account or "(set PBS_ACCOUNT env var)",
                 },
+                "workspace_base_path": workspace_base,
                 "recommended_usage": {
                     "min_nodes": 1,
                     "max_nodes": max_nodes,
                     "typical_ranks_per_node": system_config.cores_per_node,
                 },
                 "example": (
-                    f"build_hello_world_submit_script("
-                    f"script_path='submit.sh', num_nodes=2, ranks_per_node=4, "
-                    f"account='myproject')"
+                    "build_hello_world_submit_script("
+                    "num_nodes=2, ranks_per_node=4, "
+                    "account='myproject')"
                 ),
             }

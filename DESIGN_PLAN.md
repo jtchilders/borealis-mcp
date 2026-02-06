@@ -44,7 +44,10 @@ borealis-mcp/
 │   │   ├── mock_pbs_client.py       # Mock PBS client for local development
 │   │   ├── pbs_client.py            # PBS API wrapper (real or mock)
 │   │   ├── pbs_tools.py             # Core PBS MCP tools
-│   │   └── pbs_resources.py         # Core PBS MCP resources
+│   │   ├── pbs_resources.py         # Core PBS MCP resources
+│   │   ├── pbs_prompts.py           # Core PBS workflow prompts
+│   │   ├── workspace.py             # Job workspace management
+│   │   └── workspace_tools.py       # Workspace MCP tools
 │   ├── applications/
 │   │   ├── __init__.py
 │   │   ├── base.py                  # Base application interface
@@ -1548,6 +1551,279 @@ def _format_queue_status(queue) -> str:
     pass
 ```
 
+#### `pbs_prompts.py`
+```python
+from fastmcp import FastMCP
+
+def register_pbs_prompts(mcp: FastMCP):
+    """Register PBS workflow prompts"""
+    
+    @mcp.prompt()
+    def job_submission_workflow(
+        application_type: str = "generic",
+        queue: str = "debug"
+    ) -> str:
+        """
+        Guide for submitting jobs to Aurora.
+        
+        Args:
+            application_type: Type of application (pytorch, tensorflow, generic)
+            queue: Target queue name
+        """
+        return f"""
+I need to help submit a {application_type} job to Aurora's {queue} queue.
+
+Please follow this workflow:
+1. Gather job requirements:
+   - Number of nodes needed
+   - Expected runtime (walltime)
+   - Required filesystems
+   - Account/project name
+
+2. Use the appropriate application tool to generate the submit script:
+   - For PyTorch: build_pytorch_submit_script()
+   - For TensorFlow: build_tensorflow_submit_script()
+   - For generic: build_generic_submit_script()
+
+3. Review the generated script with the user
+
+4. Submit using submit_pbs_job() with the generated script
+
+5. Monitor with get_job_status() until complete
+
+Let's start by asking the user for the job requirements.
+"""
+    
+    @mcp.prompt()
+    def job_debugging_workflow(job_id: str) -> str:
+        """
+        Guide for debugging failed or stuck jobs.
+        
+        Args:
+            job_id: The PBS job ID to debug
+        """
+        return f"""
+I need to help debug job {job_id}.
+
+Investigation steps:
+1. Get current job status with get_job_status()
+2. Check the job resource (pbs://job/{job_id}) for details
+3. Review queue status (pbs://queue/<queue_name>)
+4. Check for common issues:
+   - Walltime limits exceeded
+   - Resource requests too high
+   - Filesystem access problems
+   - Module loading errors
+
+Based on findings, suggest:
+- Script modifications
+- Resource adjustments
+- Alternative queue if needed
+"""
+```
+
+#### Workspace Management (`workspace.py`, `workspace_tools.py`)
+
+The workspace system provides job-specific directories on the HPC filesystem where scripts, inputs, and outputs are stored. This ensures all file operations happen on the MCP server side (HPC login node), not on the client machine.
+
+##### Configuration (`config/borealis.yaml`)
+```yaml
+# Job workspace configuration
+workspace:
+  # Base path for job workspaces (use a project directory on Lustre)
+  # Example: /lus/flare/projects/myproject/borealis_jobs
+  base_path: null  # If null, uses $HOME/borealis_jobs
+
+  # Can be overridden with BOREALIS_JOB_WORKSPACE environment variable
+  auto_cleanup_days: 0  # 0 = never auto-cleanup
+  keep_on_completion: true
+```
+
+##### Workspace Manager (`workspace.py`)
+```python
+"""Workspace management for job directories on the HPC filesystem."""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+import json
+import uuid
+from datetime import datetime
+
+WORKSPACE_METADATA_FILE = ".borealis_workspace.json"
+
+@dataclass
+class WorkspaceInfo:
+    """Information about a job workspace."""
+    workspace_id: str
+    path: str
+    job_name: str
+    created_at: str
+    system: str
+    status: str = "active"  # active, submitted, completed, failed
+    job_id: Optional[str] = None
+    script_path: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class WorkspaceManager:
+    """
+    Manages job workspaces on the HPC filesystem.
+
+    Workspaces are directories that contain:
+    - PBS submit scripts
+    - Job input files
+    - Job output files
+    - Metadata about the job (.borealis_workspace.json)
+    """
+
+    def __init__(self, base_path: Optional[str] = None, system_name: str = "unknown"):
+        """Initialize with base path from config or environment."""
+        # Priority: base_path arg > BOREALIS_JOB_WORKSPACE env > $HOME/borealis_jobs
+        ...
+
+    def create_workspace(self, job_name: str, metadata: Optional[Dict] = None) -> WorkspaceInfo:
+        """Create a new workspace directory with unique ID and timestamp."""
+        ...
+
+    def get_workspace(self, workspace_id: str) -> Optional[WorkspaceInfo]:
+        """Get workspace info by ID."""
+        ...
+
+    def update_workspace(self, workspace_id: str, status: str = None,
+                        job_id: str = None, script_path: str = None) -> Optional[WorkspaceInfo]:
+        """Update workspace metadata (e.g., after job submission)."""
+        ...
+
+    def list_workspaces(self, status: Optional[str] = None, limit: int = 50) -> List[WorkspaceInfo]:
+        """List workspaces, optionally filtered by status."""
+        ...
+
+    def cleanup_workspace(self, workspace_id: str, force: bool = False) -> bool:
+        """Remove a workspace directory."""
+        ...
+
+    def get_script_path(self, workspace_id: str, script_name: str = "submit.sh") -> str:
+        """Get the path for a submit script in a workspace."""
+        ...
+```
+
+##### Workspace MCP Tools (`workspace_tools.py`)
+```python
+def register_workspace_tools(mcp: FastMCP, system_config: SystemConfig,
+                             config_loader: SystemConfigLoader) -> WorkspaceManager:
+    """Register workspace management tools and return the manager instance."""
+
+    @mcp.tool()
+    def create_job_workspace(job_name: str, description: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a new job workspace directory.
+
+        Returns:
+            workspace_id: Unique identifier for this workspace
+            path: Full path to the workspace directory
+            job_name: Name used for the workspace
+            created_at: Timestamp of creation
+        """
+        ...
+
+    @mcp.tool()
+    def get_workspace_info(workspace_id: str) -> Dict[str, Any]:
+        """Get information about a job workspace."""
+        ...
+
+    @mcp.tool()
+    def list_workspaces(status: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
+        """List existing job workspaces."""
+        ...
+
+    @mcp.tool()
+    def cleanup_workspace(workspace_id: str, force: bool = False) -> Dict[str, Any]:
+        """Remove a job workspace directory."""
+        ...
+
+    @mcp.tool()
+    def get_workspace_base_path() -> Dict[str, Any]:
+        """Get the base path where job workspaces are created."""
+        ...
+
+    return workspace_manager
+```
+
+##### Workflow Integration
+
+Application tools (e.g., `build_hello_world_submit_script`) now use workspaces:
+
+1. Accept optional `workspace_id` parameter instead of `script_path`
+2. Auto-create workspace if none provided
+3. Write scripts to workspace directory on HPC filesystem
+4. Return `workspace_id` for use in subsequent operations
+
+```python
+@mcp.tool()
+def build_hello_world_submit_script(
+    num_nodes: int,
+    ranks_per_node: int,
+    workspace_id: Optional[str] = None,  # Use existing workspace or create new
+    account: str = default_account,
+    ...
+) -> Dict[str, Any]:
+    """
+    Generate PBS submit script for MPI Hello World.
+
+    The script is created in a job workspace. If no workspace_id is
+    provided, a new workspace will be created automatically.
+
+    Returns:
+        workspace_id: Workspace identifier for subsequent operations
+        workspace_path: Full path to workspace directory
+        script_path: Full path to the generated submit script
+        configuration: Job configuration details
+    """
+    ...
+```
+
+The `submit_pbs_job` tool also accepts `workspace_id`:
+
+```python
+@mcp.tool()
+def submit_pbs_job(
+    script_path: Optional[str] = None,
+    workspace_id: Optional[str] = None,  # Alternative to script_path
+    ...
+) -> Dict[str, Any]:
+    """
+    Submit a PBS job. Provide either script_path or workspace_id.
+
+    When using workspace_id:
+    - Uses the submit script from the workspace
+    - Updates workspace status to "submitted"
+    - Records job_id in workspace metadata
+    """
+    ...
+```
+
+##### Example Workflow
+
+```
+# Option 1: Explicit workspace creation
+1. create_job_workspace(job_name="hello_world_test")
+   → {"workspace_id": "abc123def456", "path": "/lus/flare/.../hello_world_test_20260206_120000/"}
+
+2. build_hello_world_submit_script(workspace_id="abc123def456", num_nodes=2, ranks_per_node=4)
+   → {"workspace_id": "abc123def456", "script_path": ".../submit.sh", ...}
+
+3. submit_pbs_job(workspace_id="abc123def456")
+   → {"job_id": "12345.aurora-pbs-0...", "workspace_id": "abc123def456", ...}
+
+# Option 2: Automatic workspace creation
+1. build_hello_world_submit_script(num_nodes=2, ranks_per_node=4)
+   → {"workspace_id": "abc123def456", "script_path": "...", ...}  # Workspace auto-created
+
+2. submit_pbs_job(workspace_id="abc123def456")
+   → {"job_id": "12345...", ...}
+```
+
 ### 4. Application Layer (`applications/`)
 
 Modular, extensible application-specific tools.
@@ -2347,31 +2623,37 @@ Agent workflow:
      "system": "Aurora",
      "mpi_command": "mpiexec",
      "mpi_flags": ["--cpu-bind", "depth"],
-     "modules": ["frameworks", "mpich/icc-all-pmix-gpu/20240625"],
-     "defaults": {"walltime": "00:30:00", "queue": "debug", "account": "datascience"}
+     "modules": ["frameworks"],
+     "defaults": {"walltime": "00:30:00", "queue": "debug", "account": "datascience"},
+     "workspace_base_path": "/home/user/borealis_jobs"
    }
 
 2. build_hello_world_submit_script(
-     script_path="/home/user/submit_hello.sh",
      num_nodes=128,
      ranks_per_node=6,
      account="datascience",
      walltime="00:30:00",
      queue="debug",
      job_name="hello_world_128nodes"
-   ) → Generate Aurora-optimized submit script
-   Returns: "/home/user/submit_hello.sh"
+   ) → Generate Aurora-optimized submit script (workspace auto-created)
+   Returns:
+   {
+     "workspace_id": "a1b2c3d4e5f6",
+     "workspace_path": "/home/user/borealis_jobs/hello_world_128nodes_20260206_120000/",
+     "script_path": "/home/user/borealis_jobs/hello_world_128nodes_20260206_120000/submit.sh",
+     "status": "created",
+     "configuration": {"nodes": 128, "ranks_per_node": 6, "total_ranks": 768, ...}
+   }
 
-3. submit_pbs_job(
-     script_path="/home/user/submit_hello.sh",
-     queue="debug",
-     job_name="hello_world_128nodes",
-     account="datascience",
-     select_spec="128",
-     walltime="00:30:00",
-     filesystems="flare:home"
-   ) → Submit to PBS
-   Returns: {"job_id": "12345.aurora-pbs-01", "status": "submitted"}
+3. submit_pbs_job(workspace_id="a1b2c3d4e5f6")
+   → Submit to PBS using the workspace's submit script
+   Returns:
+   {
+     "job_id": "12345.aurora-pbs-01",
+     "workspace_id": "a1b2c3d4e5f6",
+     "workspace_path": "/home/user/borealis_jobs/hello_world_128nodes_20260206_120000/",
+     "status": "submitted"
+   }
 
 4. get_job_status("12345.aurora-pbs-01") → Monitor progress
    Returns: {"state": "Q", "queue": "debug", ...}
@@ -2398,25 +2680,31 @@ User: "Run hello_world with 4 nodes and 8 ranks per node on both Aurora and Pola
 
 Agent workflow (on Aurora):
 1. build_hello_world_submit_script(
-     script_path="submit_aurora.sh",
      num_nodes=4,
      ranks_per_node=8
    )
-   → Generates script with:
-   - modules: frameworks, mpich/icc-all-pmix-gpu/20240625
+   → Generates workspace and script with:
+   - modules: frameworks
    - mpiexec with --cpu-bind depth
    - Intel-specific environment variables
+   Returns: {"workspace_id": "abc123", "script_path": "...", ...}
+
+2. submit_pbs_job(workspace_id="abc123")
+   → Submits using workspace script
 
 Agent workflow (on Polaris):
 1. build_hello_world_submit_script(
-     script_path="submit_polaris.sh", 
      num_nodes=4,
      ranks_per_node=8
    )
-   → Generates script with:
+   → Generates workspace and script with:
    - modules: conda, cray-mpich
    - mpiexec with --cpu-bind core
    - Cray-specific environment variables
+   Returns: {"workspace_id": "def456", "script_path": "...", ...}
+
+2. submit_pbs_job(workspace_id="def456")
+   → Submits using workspace script
 
 Same tool call, different system-optimized outputs!
 ```

@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from borealis_mcp.applications.base import ApplicationBase
 from borealis_mcp.config.system import SystemConfig, SystemConfigLoader
+from borealis_mcp.core.workspace import WorkspaceManager
 from borealis_mcp.utils.logging import get_logger
 
 logger = get_logger("registry")
@@ -102,6 +103,7 @@ class ApplicationRegistry:
         mcp: FastMCP,
         system_config: SystemConfig,
         config_loader: SystemConfigLoader,
+        workspace_manager: Optional[WorkspaceManager] = None,
     ) -> None:
         """
         Register all applications with the MCP server.
@@ -110,6 +112,7 @@ class ApplicationRegistry:
             mcp: FastMCP server instance
             system_config: Current system configuration
             config_loader: Configuration loader for app-specific configs
+            workspace_manager: Workspace manager for job workspaces
         """
         for name, app in self._applications.items():
             # Check if application supports this system
@@ -123,7 +126,7 @@ class ApplicationRegistry:
             app_config = config_loader.load_app_config(name, system_config.name)
 
             try:
-                app.register_all(mcp, system_config, app_config)
+                app.register_all(mcp, system_config, app_config, workspace_manager)
                 logger.info(f"Registered application: {name}")
             except Exception as e:
                 logger.error(f"Failed to register application {name}: {e}")

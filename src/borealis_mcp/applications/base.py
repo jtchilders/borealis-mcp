@@ -1,11 +1,14 @@
 """Base application interface for Borealis MCP."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastmcp import FastMCP
 
 from borealis_mcp.config.system import SystemConfig
+
+if TYPE_CHECKING:
+    from borealis_mcp.core.workspace import WorkspaceManager
 
 
 class ApplicationBase(ABC):
@@ -77,6 +80,7 @@ class ApplicationBase(ABC):
         mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
     ) -> None:
         """
         Register application-specific MCP tools.
@@ -88,6 +92,7 @@ class ApplicationBase(ABC):
             mcp: FastMCP server instance
             system_config: Current system configuration
             app_config: Optional application-specific configuration from YAML
+            workspace_manager: Optional workspace manager for job workspaces
         """
         ...
 
@@ -96,6 +101,7 @@ class ApplicationBase(ABC):
         mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
     ) -> None:
         """
         Register application-specific MCP resources.
@@ -106,6 +112,7 @@ class ApplicationBase(ABC):
             mcp: FastMCP server instance
             system_config: Current system configuration
             app_config: Optional application-specific configuration
+            workspace_manager: Optional workspace manager for job workspaces
         """
         pass
 
@@ -114,6 +121,7 @@ class ApplicationBase(ABC):
         mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
     ) -> None:
         """
         Register application-specific MCP prompts.
@@ -124,6 +132,7 @@ class ApplicationBase(ABC):
             mcp: FastMCP server instance
             system_config: Current system configuration
             app_config: Optional application-specific configuration
+            workspace_manager: Optional workspace manager for job workspaces
         """
         pass
 
@@ -132,6 +141,7 @@ class ApplicationBase(ABC):
         mcp: FastMCP,
         system_config: SystemConfig,
         app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
     ) -> None:
         """
         Register all application components (tools, resources, prompts).
@@ -142,7 +152,8 @@ class ApplicationBase(ABC):
             mcp: FastMCP server instance
             system_config: Current system configuration
             app_config: Optional application-specific configuration
+            workspace_manager: Optional workspace manager for job workspaces
         """
-        self.register_tools(mcp, system_config, app_config)
-        self.register_resources(mcp, system_config, app_config)
-        self.register_prompts(mcp, system_config, app_config)
+        self.register_tools(mcp, system_config, app_config, workspace_manager)
+        self.register_resources(mcp, system_config, app_config, workspace_manager)
+        self.register_prompts(mcp, system_config, app_config, workspace_manager)
