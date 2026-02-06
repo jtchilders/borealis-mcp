@@ -44,8 +44,7 @@ borealis-mcp/
 │   │   ├── mock_pbs_client.py       # Mock PBS client for local development
 │   │   ├── pbs_client.py            # PBS API wrapper (real or mock)
 │   │   ├── pbs_tools.py             # Core PBS MCP tools
-│   │   ├── pbs_resources.py         # Core PBS MCP resources
-│   │   └── pbs_prompts.py           # Core PBS workflow prompts
+│   │   └── pbs_resources.py         # Core PBS MCP resources
 │   ├── applications/
 │   │   ├── __init__.py
 │   │   ├── base.py                  # Base application interface
@@ -505,7 +504,6 @@ from pathlib import Path
 from borealis_mcp.config.system import SystemConfigLoader
 from borealis_mcp.core.pbs_tools import register_pbs_tools
 from borealis_mcp.core.pbs_resources import register_pbs_resources
-from borealis_mcp.core.pbs_prompts import register_pbs_prompts
 from borealis_mcp.applications.registry import ApplicationRegistry
 from borealis_mcp.utils.logging import setup_logging
 
@@ -562,7 +560,6 @@ if is_mock_mode():
 # Register core PBS capabilities (pass system config)
 register_pbs_tools(mcp, current_system)
 register_pbs_resources(mcp, current_system, config_loader)
-register_pbs_prompts(mcp, current_system)
 
 # Auto-discover and register applications (pass system config and loader)
 registry = ApplicationRegistry()
@@ -1549,77 +1546,6 @@ def _format_queue_status(queue) -> str:
     """Format queue status"""
     # Implementation
     pass
-```
-
-#### `pbs_prompts.py`
-```python
-from fastmcp import FastMCP
-
-def register_pbs_prompts(mcp: FastMCP):
-    """Register PBS workflow prompts"""
-    
-    @mcp.prompt()
-    def job_submission_workflow(
-        application_type: str = "generic",
-        queue: str = "debug"
-    ) -> str:
-        """
-        Guide for submitting jobs to Aurora.
-        
-        Args:
-            application_type: Type of application (pytorch, tensorflow, generic)
-            queue: Target queue name
-        """
-        return f"""
-I need to help submit a {application_type} job to Aurora's {queue} queue.
-
-Please follow this workflow:
-1. Gather job requirements:
-   - Number of nodes needed
-   - Expected runtime (walltime)
-   - Required filesystems
-   - Account/project name
-
-2. Use the appropriate application tool to generate the submit script:
-   - For PyTorch: build_pytorch_submit_script()
-   - For TensorFlow: build_tensorflow_submit_script()
-   - For generic: build_generic_submit_script()
-
-3. Review the generated script with the user
-
-4. Submit using submit_pbs_job() with the generated script
-
-5. Monitor with get_job_status() until complete
-
-Let's start by asking the user for the job requirements.
-"""
-    
-    @mcp.prompt()
-    def job_debugging_workflow(job_id: str) -> str:
-        """
-        Guide for debugging failed or stuck jobs.
-        
-        Args:
-            job_id: The PBS job ID to debug
-        """
-        return f"""
-I need to help debug job {job_id}.
-
-Investigation steps:
-1. Get current job status with get_job_status()
-2. Check the job resource (pbs://job/{job_id}) for details
-3. Review queue status (pbs://queue/<queue_name>)
-4. Check for common issues:
-   - Walltime limits exceeded
-   - Resource requests too high
-   - Filesystem access problems
-   - Module loading errors
-
-Based on findings, suggest:
-- Script modifications
-- Resource adjustments
-- Alternative queue if needed
-"""
 ```
 
 ### 4. Application Layer (`applications/`)

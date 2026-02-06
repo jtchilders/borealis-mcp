@@ -12,7 +12,6 @@ from borealis_mcp.applications.registry import ApplicationRegistry
 from borealis_mcp.config.constants import ENV_BOREALIS_SYSTEM
 from borealis_mcp.config.system import SystemConfigLoader
 from borealis_mcp.core.mock_pbs_client import is_mock_mode
-from borealis_mcp.core.pbs_prompts import register_pbs_prompts
 from borealis_mcp.core.pbs_resources import register_pbs_resources
 from borealis_mcp.core.pbs_tools import register_pbs_tools
 from borealis_mcp.utils.logging import get_logger, setup_logging
@@ -98,7 +97,6 @@ def create_server(
     # Register core PBS capabilities
     register_pbs_tools(mcp, current_system)
     register_pbs_resources(mcp, current_system, config_loader)
-    register_pbs_prompts(mcp, current_system)
 
     # Auto-discover and register applications
     registry = ApplicationRegistry()
