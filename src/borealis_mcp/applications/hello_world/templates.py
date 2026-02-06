@@ -98,7 +98,7 @@ echo "========================================"
 echo ""
 
 # Run Hello World - each rank prints its rank number and hostname
-{mpi_command} -n $NTOTRANKS -ppn $NRANKS_PER_NODE {flags_str} bash -c '\\
+{mpi_command} -n $NTOTRANKS --ppn $NRANKS_PER_NODE --depth 1 --cpu-bind depth {flags_str} bash -c '\\
     echo "Hello from rank ${{PMI_RANK:-${{PMIX_RANK:-${{OMPI_COMM_WORLD_RANK:-unknown}}}}}} on $(hostname)"'
 
 echo ""
