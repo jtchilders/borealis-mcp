@@ -1,7 +1,7 @@
 name: aurora
 display_name: "Aurora"
 facility: "Argonne Leadership Computing Facility (ALCF)"
-pbs_server: aurora-pbs-0.hsn.aurora.alcf.anl.gov
+pbs_server: aurora-pbs-0001.hostmgmt.cm.aurora.alcf.anl.gov
 
 hardware:
   total_nodes: 10624
