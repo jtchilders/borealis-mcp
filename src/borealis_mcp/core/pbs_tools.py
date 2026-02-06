@@ -59,13 +59,18 @@ def register_pbs_tools(
         - script_path: Direct path to the PBS submit script
         - workspace_id: ID of a workspace containing a submit script
 
+        IMPORTANT: When using the PBS API (pbs_ifl), the #PBS directives in the
+        script are IGNORED. All job attributes must be passed via the API parameters.
+        This function automatically extracts settings from workspace metadata when
+        submitting via workspace_id.
+
         Args:
             script_path: Path to the PBS submit script
             workspace_id: Workspace ID (alternative to script_path)
             queue: Queue to submit to (default: system default queue)
             job_name: Name for the job
             account: PBS account/project name (defaults to PBS_ACCOUNT env var)
-            select_spec: Node selection specification (e.g., "4" for 4 nodes)
+            select_spec: Node selection specification (e.g., "2" for 2 nodes)
             walltime: Wall time in HH:MM:SS format
             filesystems: Filesystem specification (e.g., "flare:home")
 
