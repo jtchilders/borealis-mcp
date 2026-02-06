@@ -1,6 +1,7 @@
 """Core PBS MCP tools for Borealis."""
 
 import os
+import traceback
 from typing import Any, Dict, List, Optional
 
 from fastmcp import FastMCP
@@ -157,6 +158,13 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Job submission failed: {e}")
             return {"error": str(e), "status": "failed"}
+        except RuntimeError as e:
+            logger.error(f"Job submission failed: {e}")
+            return {
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+                "status": "failed",
+            }
 
     @mcp.tool()
     def get_job_status(job_id: str) -> Dict[str, Any]:
@@ -183,6 +191,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to get job status: {e}")
             return {"error": str(e)}
+        except RuntimeError as e:
+            logger.error(f"Failed to get job status: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc()}
 
     @mcp.tool()
     def list_jobs(
@@ -224,6 +235,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to list jobs: {e}")
             return {"error": str(e)}
+        except RuntimeError as e:
+            logger.error(f"Failed to list jobs: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc()}
 
     @mcp.tool()
     def delete_job(job_id: str, force: bool = False) -> Dict[str, Any]:
@@ -250,6 +264,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to delete job: {e}")
             return {"error": str(e), "status": "failed"}
+        except RuntimeError as e:
+            logger.error(f"Failed to delete job: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc(), "status": "failed"}
 
     @mcp.tool()
     def hold_job(job_id: str) -> Dict[str, Any]:
@@ -275,6 +292,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to hold job: {e}")
             return {"error": str(e), "status": "failed"}
+        except RuntimeError as e:
+            logger.error(f"Failed to hold job: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc(), "status": "failed"}
 
     @mcp.tool()
     def release_job(job_id: str) -> Dict[str, Any]:
@@ -300,6 +320,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to release job: {e}")
             return {"error": str(e), "status": "failed"}
+        except RuntimeError as e:
+            logger.error(f"Failed to release job: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc(), "status": "failed"}
 
     @mcp.tool()
     def get_queue_info(queue_name: Optional[str] = None) -> Dict[str, Any]:
@@ -328,6 +351,9 @@ def register_pbs_tools(
         except PBSException as e:
             logger.error(f"Failed to get queue info: {e}")
             return {"error": str(e)}
+        except RuntimeError as e:
+            logger.error(f"Failed to get queue info: {e}")
+            return {"error": str(e), "traceback": traceback.format_exc()}
 
     @mcp.tool()
     def get_system_info() -> Dict[str, Any]:

@@ -54,10 +54,12 @@ def _get_pbs_client_class() -> tuple:
 
 
 # Get the client classes at module load time
+_pbs_import_error: Optional[str] = None
 try:
     PBSClient, PBSException = _get_pbs_client_class()
-except RuntimeError:
-    # If we can't load, set to None and let it fail at runtime
+except RuntimeError as e:
+    # Preserve the original error message for later
+    _pbs_import_error = str(e)
     PBSClient = None  # type: ignore
     PBSException = MockPBSException
 
@@ -81,10 +83,13 @@ def get_pbs_client(
         RuntimeError: If PBS client is not available
     """
     if PBSClient is None:
-        raise RuntimeError(
+        error_msg = (
             "PBS client not available. Either run on an HPC login node or "
             f"set {ENV_BOREALIS_MOCK_PBS}=1 for local development."
         )
+        if _pbs_import_error:
+            error_msg += f"\n\nOriginal error:\n{_pbs_import_error}"
+        raise RuntimeError(error_msg)
 
     server = server or system_config.pbs_server
 
