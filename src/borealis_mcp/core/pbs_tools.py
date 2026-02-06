@@ -87,6 +87,11 @@ def register_pbs_tools(
                     "status": "failed",
                 }
             script_path = workspace_info.script_path
+            # Extract node count from workspace metadata if not explicitly provided
+            if not select_spec and workspace_info.metadata:
+                num_nodes = workspace_info.metadata.get("num_nodes")
+                if num_nodes:
+                    select_spec = str(num_nodes)
         elif not script_path:
             return {
                 "error": "Either script_path or workspace_id must be provided",
@@ -119,6 +124,7 @@ def register_pbs_tools(
         resource_list: Dict[str, str] = {}
         if select_spec:
             resource_list["select"] = select_spec
+            resource_list["place"] = "scatter"  # Ensure nodes are on separate physical nodes
         if walltime:
             resource_list["walltime"] = walltime
         if filesystems:
