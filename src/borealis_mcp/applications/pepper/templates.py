@@ -1,0 +1,218 @@
+"""Pepper application templates for Borealis MCP."""
+
+from typing import Any, Dict, List, Optional
+
+from borealis_mcp.config.system import SystemConfig
+
+
+class PepperTemplates:
+    """PBS submit script templates for Pepper event generator."""
+
+    @staticmethod
+    def generate_submit_script(
+        system_config: SystemConfig,
+        num_nodes: int,
+        ranks_per_node: int,
+        walltime: str,
+        queue: str,
+        job_name: str,
+        account: str,
+        modules: List[str],
+        mpi_command: str,
+        mpi_flags: List[str],
+        env_vars: Dict[str, Any],
+        pepper_executable: str,
+        pepper_args: str,
+        use_gpu: bool = True,
+        gpu_affinity_script: Optional[str] = None,
+    ) -> str:
+        """
+        Generate Pepper PBS submit script for Aurora.
+
+        Creates a script optimized for running Pepper on Intel GPUs with
+        proper MPI configuration and GPU affinity.
+
+        Args:
+            system_config: System configuration
+            num_nodes: Number of nodes to use
+            ranks_per_node: MPI ranks per node (typically 12 for Aurora, 1 per GPU tile)
+            walltime: Wall time in HH:MM:SS format
+            queue: Queue name
+            job_name: Name for the PBS job
+            account: PBS account/project name
+            modules: List of modules to load
+            mpi_command: MPI launch command (e.g., "mpiexec")
+            mpi_flags: Additional MPI flags
+            env_vars: Environment variables to set
+            pepper_executable: Path to pepper executable
+            pepper_args: Command-line arguments for pepper
+            use_gpu: Whether to enable GPU support (default True)
+            gpu_affinity_script: Optional path to GPU affinity script
+
+        Returns:
+            Complete PBS submit script as string
+        """
+        # Build module load commands
+        module_cmds = "\n".join([f"module load {mod}" for mod in modules])
+
+        # Build environment variable exports
+        env_cmds = "\n".join(
+            [f"export {key}=\"{value}\"" for key, value in env_vars.items()]
+        )
+        env_section = env_cmds if env_cmds else "# No additional environment variables"
+
+        # Build MPI flags string
+        flags_str = " ".join(mpi_flags) if mpi_flags else ""
+
+        # Default filesystems
+        default_fs = ":".join(system_config.default_filesystems)
+
+        # Calculate total ranks
+        total_ranks = num_nodes * ranks_per_node
+
+        # Get GPU info from system config
+        gpus_per_node = getattr(system_config, "gpus_per_node", 12)
+        custom_settings = getattr(system_config, "custom_settings", {}) or {}
+        gpu_settings = custom_settings.get("gpu", {})
+        tiles_per_gpu = gpu_settings.get("tiles_per_gpu", 2)
+        total_tiles = gpus_per_node * tiles_per_gpu
+
+        # GPU affinity setup for Aurora Intel GPUs
+        # Each node has 6 GPUs with 2 tiles each = 12 total GPU tiles
+        # We bind 1 MPI rank per tile for optimal performance
+        gpu_affinity_section = ""
+        if use_gpu:
+            gpu_affinity_section = f"""
+# GPU Affinity Setup for Aurora Intel GPUs
+# Each node has {gpus_per_node} GPUs with {tiles_per_gpu} tiles each = {total_tiles} total tiles
+# Binding 1 MPI rank per GPU tile
+
+# Function to set GPU affinity based on local rank
+set_gpu_affinity() {{
+    local LOCAL_RANK=${{PMI_LOCAL_RANK:-${{PALS_LOCAL_RANKID:-0}}}}
+    local GPU_ID=$((LOCAL_RANK / {tiles_per_gpu}))
+    local TILE_ID=$((LOCAL_RANK % {tiles_per_gpu}))
+    export ZE_AFFINITY_MASK="${{GPU_ID}}.${{TILE_ID}}"
+}}
+
+# Export the function for use in mpiexec
+export -f set_gpu_affinity
+"""
+
+        # Build the mpiexec command
+        if use_gpu and not gpu_affinity_script:
+            # Use inline GPU affinity binding
+            mpi_launch = f"""{mpi_command} -n $NTOTRANKS --ppn $NRANKS_PER_NODE {flags_str} \\
+    bash -c 'set_gpu_affinity; {pepper_executable} {pepper_args}'"""
+        elif use_gpu and gpu_affinity_script:
+            # Use external affinity script
+            mpi_launch = f"""{mpi_command} -n $NTOTRANKS --ppn $NRANKS_PER_NODE {flags_str} \\
+    {gpu_affinity_script} {pepper_executable} {pepper_args}"""
+        else:
+            # CPU-only run
+            mpi_launch = f"""{mpi_command} -n $NTOTRANKS --ppn $NRANKS_PER_NODE {flags_str} \\
+    {pepper_executable} {pepper_args}"""
+
+        return f'''#!/bin/bash -l
+#PBS -l select={num_nodes}
+#PBS -l place=scatter
+#PBS -l walltime={walltime}
+#PBS -l filesystems={default_fs}
+#PBS -q {queue}
+#PBS -A {account}
+#PBS -N {job_name}
+
+# =============================================================================
+# Pepper Event Generator Job
+# System: {system_config.display_name}
+# Total Ranks: {total_ranks} ({num_nodes} nodes x {ranks_per_node} ranks/node)
+# GPU Mode: {"Enabled" if use_gpu else "Disabled"}
+# Generated by Borealis MCP
+# =============================================================================
+
+cd $PBS_O_WORKDIR
+
+# Load modules
+{module_cmds}
+
+# Set environment variables
+{env_section}
+
+# MPI and job parameters
+NNODES={num_nodes}
+NRANKS_PER_NODE={ranks_per_node}
+NTOTRANKS={total_ranks}
+{gpu_affinity_section}
+echo "========================================"
+echo "Pepper Event Generator"
+echo "========================================"
+echo "System: {system_config.display_name}"
+echo "Nodes: $NNODES"
+echo "Ranks per node: $NRANKS_PER_NODE"
+echo "Total ranks: $NTOTRANKS"
+echo "GPU Mode: {"Enabled" if use_gpu else "Disabled"}"
+echo "Pepper executable: {pepper_executable}"
+echo "Pepper arguments: {pepper_args}"
+echo "========================================"
+echo ""
+
+# Record start time
+START_TIME=$(date +%s)
+
+# Run Pepper
+{mpi_launch}
+
+RET=$?
+
+# Record end time and calculate duration
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+echo ""
+echo "========================================"
+echo "Pepper job completed"
+echo "Exit code: $RET"
+echo "Duration: $DURATION seconds"
+echo "========================================"
+
+exit $RET
+'''
+
+    @staticmethod
+    def generate_gpu_affinity_script() -> str:
+        """
+        Generate a standalone GPU affinity wrapper script for Aurora.
+
+        This script can be used to wrap any executable and set the correct
+        ZE_AFFINITY_MASK based on the local MPI rank.
+
+        Returns:
+            GPU affinity wrapper script as string
+        """
+        return '''#!/bin/bash
+# GPU Affinity Wrapper Script for Aurora Intel GPUs
+# Sets ZE_AFFINITY_MASK based on local MPI rank
+#
+# Usage: ./gpu_affinity.sh <executable> [args...]
+#
+# Aurora has 6 GPUs per node, each with 2 tiles = 12 total GPU tiles
+# This script binds each MPI rank to a specific GPU tile.
+
+# Get local rank from MPI environment
+LOCAL_RANK=${PMI_LOCAL_RANK:-${PALS_LOCAL_RANKID:-0}}
+
+# Calculate GPU and tile IDs
+# Assuming 2 tiles per GPU
+TILES_PER_GPU=2
+GPU_ID=$((LOCAL_RANK / TILES_PER_GPU))
+TILE_ID=$((LOCAL_RANK % TILES_PER_GPU))
+
+# Set the affinity mask
+export ZE_AFFINITY_MASK="${GPU_ID}.${TILE_ID}"
+
+# Debug output (uncomment for troubleshooting)
+# echo "Rank $LOCAL_RANK -> GPU $GPU_ID, Tile $TILE_ID (ZE_AFFINITY_MASK=$ZE_AFFINITY_MASK)"
+
+# Execute the command
+exec "$@"
+'''

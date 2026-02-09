@@ -1,0 +1,37 @@
+# Pepper application configuration for Aurora
+# Pepper: Portable Engine for the Production of Parton-level Event Records
+# https://spice-mc.gitlab.io/pepper/
+
+# Modules to load
+modules:
+  - "frameworks"  # Includes Intel compilers, MPI, and GPU support
+
+# MPI configuration
+mpi:
+  command: "mpiexec"
+  flags:
+    - "--cpu-bind"
+    - "depth"
+    - "--depth"
+    - "1"
+
+# Environment variables for Intel GPU support
+environment:
+  ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+  MPICH_GPU_SUPPORT_ENABLED: "1"
+  # Enable GPU-aware MPI for better performance
+  MPICH_OFI_NIC_POLICY: "NUMA"
+
+# Default job settings
+defaults:
+  walltime: "01:00:00"
+  queue: "debug"
+  pepper_executable: "pepper"  # Assumes pepper is in PATH after module load
+  # For custom installations, set full path:
+  # pepper_executable: "/path/to/pepper/bin/pepper"
+
+# GPU configuration notes:
+# Aurora nodes have 6 Intel Data Center GPU Max 1550
+# Each GPU has 2 tiles, giving 12 total GPU tiles per node
+# Recommended: 12 MPI ranks per node (1 per tile) for GPU jobs
+# The application automatically handles GPU affinity via ZE_AFFINITY_MASK

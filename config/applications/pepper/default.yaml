@@ -1,0 +1,21 @@
+# Pepper application default configuration
+# Used when no system-specific configuration is available
+# Pepper: Portable Engine for the Production of Parton-level Event Records
+# https://spice-mc.gitlab.io/pepper/
+
+# Modules to load (system-dependent, may need adjustment)
+modules: []
+
+# MPI configuration
+mpi:
+  command: "mpiexec"
+  flags: []
+
+# Environment variables
+environment: {}
+
+# Default job settings
+defaults:
+  walltime: "01:00:00"
+  queue: "debug"
+  pepper_executable: "pepper"
