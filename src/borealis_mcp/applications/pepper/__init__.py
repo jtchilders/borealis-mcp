@@ -62,14 +62,17 @@ class Application(ApplicationBase):
             modules = app_config.get("modules", system_config.recommended_modules)
             mpi_command = app_config.get("mpi", {}).get("command", "mpiexec")
             mpi_flags = app_config.get("mpi", {}).get("flags", [])
-            env_vars = app_config.get("environment", {})
+            env_vars = app_config.get("environment") or {}
             default_walltime = app_config.get("defaults", {}).get(
                 "walltime", "01:00:00"
             )
             default_queue = app_config.get("defaults", {}).get("queue", "debug")
             default_pepper_path = app_config.get("defaults", {}).get(
-                "pepper_executable", "pepper"
+                "pepper_executable", ""
             )
+            # Fullstack setup paths (preferred over direct executable)
+            fullstack_setup = app_config.get("fullstack_setup")
+            pepper_setup = app_config.get("pepper_setup")
         else:
             # Use system defaults
             modules = system_config.recommended_modules
@@ -80,17 +83,19 @@ class Application(ApplicationBase):
             env_vars = custom_settings.get("environment", {})
             default_walltime = "01:00:00"
             default_queue = "debug"
-            default_pepper_path = "pepper"
+            default_pepper_path = ""
+            fullstack_setup = None
+            pepper_setup = None
 
         # Get default account from environment
         default_account = os.environ.get(ENV_PBS_ACCOUNT, "")
 
         # Get GPU configuration from system
-        gpus_per_node = getattr(system_config, "gpus_per_node", 12)
+        gpus_per_node = getattr(system_config, "gpus_per_node", 6)
+        tiles_per_gpu = getattr(system_config, "tiles_per_gpu", 2)
         custom_settings = getattr(system_config, "custom_settings", {}) or {}
-        gpu_settings = custom_settings.get("gpu", {})
-        tiles_per_gpu = gpu_settings.get("tiles_per_gpu", 2)
-        default_ranks_per_node = gpus_per_node * tiles_per_gpu  # 1 rank per tile
+        # Use 1 rank per GPU (not per tile) for pepper - simpler and works well
+        default_ranks_per_node = gpus_per_node  # 6 ranks per node on Aurora
 
         @mcp.tool()
         def build_pepper_submit_script(
@@ -104,14 +109,19 @@ class Application(ApplicationBase):
             walltime: str = default_walltime,
             queue: str = default_queue,
             job_name: str = "pepper",
-            pepper_executable: str = default_pepper_path,
+            pepper_executable: Optional[str] = None,
             output_format: str = "hdf5",
             output_file: Optional[str] = None,
+            batch_size: int = 1024,
             use_gpu: bool = True,
             extra_args: str = "",
         ) -> Dict[str, Any]:
             """
             Generate PBS submit script for Pepper event generator.
+
+            ALWAYS use this tool for Pepper jobs - it handles the correct command-line
+            arguments and GPU affinity automatically. Do NOT use build_generic_submit_script
+            for Pepper.
 
             Creates a PBS script optimized for running Pepper on Aurora with
             Intel GPUs. Automatically configures MPI ranks and GPU affinity
@@ -128,9 +138,10 @@ class Application(ApplicationBase):
                 walltime: Wall time in HH:MM:SS format (default: 01:00:00)
                 queue: Queue name (default: debug)
                 job_name: Name for the PBS job (default: pepper)
-                pepper_executable: Path to pepper executable (default: pepper)
+                pepper_executable: Full path to pepper executable (uses config default if set)
                 output_format: Output format - "hdf5", "hepmc3", or "disabled" (default: hdf5)
                 output_file: Output filename (default: auto-generated based on process)
+                batch_size: Batch size for GPU processing (default: 1024)
                 use_gpu: Enable GPU acceleration (default: True)
                 extra_args: Additional command-line arguments for pepper
 
@@ -143,12 +154,24 @@ class Application(ApplicationBase):
                     collision_energy=91.2,
                     n_events=10000,
                     num_nodes=2,
-                    account="myproject"
+                    account="myproject",
+                    pepper_executable="/path/to/pepper/bin/pepper"
                 )
             """
             if workspace_manager is None:
                 return {
                     "error": "Workspace manager not available",
+                    "status": "failed",
+                }
+
+            # Resolve pepper executable: use provided value, fall back to config default
+            resolved_pepper_executable = pepper_executable or default_pepper_path
+
+            # Validate: either fullstack setup or pepper_executable must be provided
+            use_fullstack = fullstack_setup is not None and pepper_setup is not None
+            if not use_fullstack and not resolved_pepper_executable:
+                return {
+                    "error": "Either fullstack setup paths or pepper_executable is required.",
                     "status": "failed",
                 }
 
@@ -162,14 +185,29 @@ class Application(ApplicationBase):
                 f'--process "{process}"',
                 f"--collision-energy {collision_energy}",
                 f"--n-events {n_events}",
+                f"--batch-size {batch_size}",
             ]
 
-            # Handle output format
+            # Handle output format - always produce output in workspace directory
             if output_format == "disabled":
                 pepper_args_parts.append("--output-disabled")
+                resolved_output_file = None
             else:
+                # Determine output filename - use provided or generate default
                 if output_file:
-                    pepper_args_parts.append(f'--output-file "{output_file}"')
+                    resolved_output_file = output_file
+                else:
+                    # Auto-generate filename based on process
+                    safe_process = process.replace(" ", "_").replace(">", "to").replace("-", "")
+                    if output_format == "hepmc3":
+                        resolved_output_file = f"{safe_process}_events.lhe"
+                    else:
+                        resolved_output_file = f"{safe_process}_events.hdf5"
+
+                # Output path will be set in template using workspace_path
+                # Just pass the filename here
+                pepper_args_parts.append(f'--output "{resolved_output_file}"')
+
                 if output_format == "hepmc3":
                     pepper_args_parts.append("--hepmc3-output")
                 # hdf5 is the default, no flag needed
@@ -227,9 +265,12 @@ class Application(ApplicationBase):
                 mpi_command=mpi_command,
                 mpi_flags=mpi_flags,
                 env_vars=env_vars,
-                pepper_executable=pepper_executable,
+                pepper_executable=resolved_pepper_executable,
                 pepper_args=pepper_args,
                 use_gpu=use_gpu,
+                fullstack_setup=fullstack_setup,
+                pepper_setup=pepper_setup,
+                workspace_path=workspace_info.path,
             )
 
             with open(script_path, "w") as f:
@@ -263,7 +304,9 @@ class Application(ApplicationBase):
                     "collision_energy": collision_energy,
                     "n_events": n_events,
                     "output_format": output_format,
-                    "executable": pepper_executable,
+                    "output_file": resolved_output_file if output_format != "disabled" else None,
+                    "setup_mode": "fullstack" if use_fullstack else "direct_executable",
+                    "executable": resolved_pepper_executable if not use_fullstack else "(via setup.sh)",
                 },
                 "next_step": (
                     f"Submit job with: submit_pbs_job("
@@ -298,6 +341,9 @@ class Application(ApplicationBase):
                 "version": "Pepper parton-level event generator",
                 "documentation": "https://spice-mc.gitlab.io/pepper/",
                 "system": system_config.display_name,
+                "setup_mode": "fullstack" if (fullstack_setup and pepper_setup) else "direct_executable",
+                "fullstack_setup": fullstack_setup,
+                "pepper_setup": pepper_setup,
                 "modules": modules,
                 "mpi_command": mpi_command,
                 "mpi_flags": mpi_flags,
@@ -311,7 +357,7 @@ class Application(ApplicationBase):
                 "defaults": {
                     "walltime": default_walltime,
                     "queue": default_queue,
-                    "pepper_executable": default_pepper_path,
+                    "pepper_executable": default_pepper_path if default_pepper_path else "(via fullstack setup)",
                     "account": default_account or "(set PBS_ACCOUNT env var)",
                 },
                 "workspace_base_path": workspace_base,
@@ -321,14 +367,15 @@ class Application(ApplicationBase):
                     "ranks_per_node": default_ranks_per_node,
                     "description": (
                         f"Use {default_ranks_per_node} ranks per node "
-                        f"(1 per GPU tile) for optimal GPU utilization"
+                        f"(1 per GPU) for optimal GPU utilization"
                     ),
                 },
                 "example_processes": [
-                    'd db -> e+ e-',
-                    'g g -> t tb',
-                    'u ub -> W+ W-',
-                    'g g -> H',
+                    "ppjj",  # Predefined: p p -> j j (dijet)
+                    "ppeej",  # Predefined: p p -> e+ e- j (Drell-Yan + jet)
+                    'd db -> e+ e-',  # Explicit: Drell-Yan
+                    'g g -> t tb',  # Explicit: top pair production
+                    'u ub -> W+ W-',  # Explicit: W pair production
                 ],
                 "example": (
                     'build_pepper_submit_script('

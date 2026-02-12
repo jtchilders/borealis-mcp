@@ -1,37 +1,44 @@
 # Pepper application configuration for Aurora
 # Pepper: Portable Engine for the Production of Parton-level Event Records
 # https://spice-mc.gitlab.io/pepper/
+#
+# Uses fullstack installation with setup.sh sourcing.
 
-# Modules to load
+# Fullstack environment setup scripts
+# These are sourced instead of loading modules
+fullstack_setup: "/home/parton/git/pepper/fullstack/setup.sh"
+pepper_setup: "/home/parton/git/pepper/fullstack/pepper/setup.sh"
+
+# Modules to load (only used if fullstack_setup is not set)
 modules:
-  - "frameworks"  # Includes Intel compilers, MPI, and GPU support
+  - "kokkos"   # Required - Pepper uses Kokkos for GPU portability
+  - "cmake"    # Used for compilation, helpful for runtime
+
+# Note: Script automatically runs "module use /soft/modulefiles" before loading
 
 # MPI configuration
 mpi:
   command: "mpiexec"
-  flags:
-    - "--cpu-bind"
-    - "depth"
-    - "--depth"
-    - "1"
+  flags: []  # --depth and --cpu-bind are added automatically by template
 
 # Environment variables for Intel GPU support
 environment:
-  ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
-  MPICH_GPU_SUPPORT_ENABLED: "1"
-  # Enable GPU-aware MPI for better performance
-  MPICH_OFI_NIC_POLICY: "NUMA"
+  # ZE_AFFINITY_MASK is set dynamically by GPU affinity wrapper
+  # MPICH_GPU_SUPPORT_ENABLED: "1"  # Uncomment if needed for GPU-aware MPI
 
 # Default job settings
 defaults:
-  walltime: "01:00:00"
+  walltime: "00:30:00"
   queue: "debug"
-  pepper_executable: "pepper"  # Assumes pepper is in PATH after module load
-  # For custom installations, set full path:
-  # pepper_executable: "/path/to/pepper/bin/pepper"
+  # pepper_executable is not needed when using fullstack setup
 
 # GPU configuration notes:
-# Aurora nodes have 6 Intel Data Center GPU Max 1550
+# Aurora nodes have 6 Intel Data Center GPU Max 1550 GPUs
 # Each GPU has 2 tiles, giving 12 total GPU tiles per node
-# Recommended: 12 MPI ranks per node (1 per tile) for GPU jobs
-# The application automatically handles GPU affinity via ZE_AFFINITY_MASK
+#
+# Recommended configuration for Pepper:
+#   - 6 MPI ranks per node (1 per GPU)
+#   - GPU affinity set via ZE_AFFINITY_MASK using PALS_LOCAL_RANKID
+#   - This simpler approach works well and avoids tile-level complexity
+#
+# The application automatically handles GPU affinity via wrapper script.
