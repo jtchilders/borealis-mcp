@@ -6,7 +6,7 @@ pbs_server: aurora-pbs-0001.hostmgmt.cm.aurora.alcf.anl.gov
 hardware:
   total_nodes: 10624
   cores_per_node: 208
-  gpus_per_node: 12
+  gpus_per_node: 6  # 6 Intel GPUs, each with 2 tiles = 12 total tiles
   gpu_type: "Intel Data Center GPU Max 1550"
   memory_per_node: 512
   memory_type: "HBM2e"

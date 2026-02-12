@@ -64,6 +64,13 @@ def register_pbs_tools(
         This function automatically extracts settings from workspace metadata when
         submitting via workspace_id.
 
+        REQUIRED PBS ATTRIBUTES (must be provided via parameters or workspace metadata):
+        - account: PBS account/project for billing
+        - queue: Target queue (e.g., "debug", "prod")
+        - select_spec: Node count (e.g., "2" for 2 nodes)
+        - walltime: Wall time limit in HH:MM:SS format
+        - filesystems: Required filesystems (e.g., "flare:home")
+
         Args:
             script_path: Path to the PBS submit script
             workspace_id: Workspace ID (alternative to script_path)

@@ -11,6 +11,7 @@ from fastmcp import FastMCP
 from borealis_mcp.applications.registry import ApplicationRegistry
 from borealis_mcp.config.constants import ENV_BOREALIS_SYSTEM
 from borealis_mcp.config.system import SystemConfigLoader
+from borealis_mcp.core.discovery import register_discovery_tools
 from borealis_mcp.core.mock_pbs_client import is_mock_mode
 from borealis_mcp.core.pbs_resources import register_pbs_resources
 from borealis_mcp.core.pbs_tools import register_pbs_tools
@@ -106,6 +107,9 @@ def create_server(
     registry = ApplicationRegistry()
     registry.discover_applications()
     registry.register_all(mcp, current_system, config_loader, workspace_manager)
+
+    # Register discovery tools (after applications so we can list them)
+    register_discovery_tools(mcp, current_system, config_loader, registry)
 
     return mcp
 

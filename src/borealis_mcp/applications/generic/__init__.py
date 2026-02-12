@@ -71,6 +71,11 @@ class Application(ApplicationBase):
             """
             Generate basic PBS submit script for any executable.
 
+            IMPORTANT: Do NOT use this for applications that have specialized tools.
+            Use the application-specific tool instead (e.g., build_pepper_submit_script
+            for Pepper jobs). Those tools know the correct command-line arguments and
+            handle GPU affinity automatically.
+
             The script is created in a job workspace. If no workspace_id is
             provided, a new workspace will be created automatically.
 
