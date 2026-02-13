@@ -15,6 +15,7 @@ from borealis_mcp.core.discovery import register_discovery_tools
 from borealis_mcp.core.mock_pbs_client import is_mock_mode
 from borealis_mcp.core.pbs_resources import register_pbs_resources
 from borealis_mcp.core.pbs_tools import register_pbs_tools
+from borealis_mcp.core.workspace_files import register_workspace_file_tools
 from borealis_mcp.core.workspace_tools import register_workspace_tools
 from borealis_mcp.utils.logging import get_logger, setup_logging
 
@@ -110,6 +111,9 @@ def create_server(
 
     # Register discovery tools (after applications so we can list them)
     register_discovery_tools(mcp, current_system, config_loader, registry)
+
+    # Register workspace file access tools (for remote file retrieval)
+    register_workspace_file_tools(mcp, workspace_manager, scp_host=current_system.name)
 
     return mcp
 
