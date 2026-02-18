@@ -160,12 +160,28 @@ def main() -> None:
         action="store_true",
         help="Enable mock PBS mode for local development",
     )
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="PBS account/project allocation (falls back to PBS_ACCOUNT env var)",
+    )
+    parser.add_argument(
+        "--pbs-server",
+        default=None,
+        help="PBS server hostname (falls back to PBS_SERVER env var)",
+    )
 
     args = parser.parse_args()
 
     # Enable mock mode if requested
     if args.mock:
         os.environ["BOREALIS_MOCK_PBS"] = "1"
+
+    # Set PBS environment variables from CLI args (if provided)
+    if args.account:
+        os.environ["PBS_ACCOUNT"] = args.account
+    if args.pbs_server:
+        os.environ["PBS_SERVER"] = args.pbs_server
 
     # Create the server
     try:
