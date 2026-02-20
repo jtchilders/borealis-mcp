@@ -60,5 +60,11 @@ echo "  PBS_ACCOUNT: $PBS_ACCOUNT"
 echo "  PYTHONPATH:  $PYTHONPATH"
 echo ""
 
-# Launch the MCP server
-python -m borealis_mcp.server
+# If this script is being sourced, return after setting env vars.
+# MCP clients should start the server explicitly (see `.kilocode/mcp.json`).
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0 2>/dev/null || true
+fi
+
+# Launch the MCP server (when executed directly)
+exec python -m borealis_mcp.server

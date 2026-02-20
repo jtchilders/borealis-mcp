@@ -99,11 +99,21 @@ def register_pbs_tools(
                     "status": "failed",
                 }
             script_path = workspace_info.script_path
-            # Extract node count from workspace metadata if not explicitly provided
-            if not select_spec and workspace_info.metadata:
-                num_nodes = workspace_info.metadata.get("num_nodes")
-                if num_nodes:
-                    select_spec = str(num_nodes)
+            # Extract submission params from workspace metadata if not explicitly provided
+            if workspace_info.metadata:
+                meta = workspace_info.metadata
+                if not select_spec:
+                    num_nodes = meta.get("num_nodes")
+                    if num_nodes is not None:
+                        select_spec = str(num_nodes)
+                if not walltime and meta.get("walltime"):
+                    walltime = meta["walltime"]
+                if not filesystems and meta.get("filesystems"):
+                    filesystems = meta["filesystems"]
+                if not queue and meta.get("queue"):
+                    queue = meta["queue"]
+                if not job_name and meta.get("job_name"):
+                    job_name = meta["job_name"]
         elif not script_path:
             return {
                 "error": "Either script_path or workspace_id must be provided",

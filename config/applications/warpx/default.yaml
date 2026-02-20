@@ -1,0 +1,42 @@
+# WarpX application default configuration
+#
+# This configuration is used when no system-specific config is available.
+# WarpX is typically invoked via a Python PICMI driver script.
+
+# Optional WarpX installation prefix (planned for shared installs)
+# warpx_prefix: "/path/to/warpx/install"
+
+# Profile script that sets up the environment (modules, paths, etc.)
+# Recommended to set to a centrally-installed default in the future.
+profile_source: "$HOME/aurora_warpx.profile"
+
+# Python virtual environment activation script for WarpX/pywarpx
+# Recommended to set to a venv under warpx_prefix in the future.
+venv_activate: "/home/${USER}/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
+
+# Modules to load (may be empty if profile_source handles modules)
+modules: []
+
+# MPI configuration
+mpi:
+  command: "mpiexec"
+  # One of: -envall or -genvall (Aurora examples use -genvall)
+  env_flag: "-genvall"
+  flags: []
+  # Optional binding strings; can be overridden per-system
+  cpu_bind: null
+  gpu_bind: null
+
+# Environment variables
+environment:
+  MPIR_CVAR_ENABLE_GPU: "1"
+  ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+
+# Default job settings
+defaults:
+  queue: "debug"
+  walltime: "00:30:00"
+  filesystems: "home:flare"
+  job_name: "warpx"
+  ranks_per_node: 12
+  threads_per_rank: 1

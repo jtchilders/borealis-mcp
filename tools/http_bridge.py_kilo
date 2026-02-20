@@ -41,10 +41,17 @@ class HTTPBridge:
         """
         self.server_url = server_url.rstrip("/")
         self.session = requests.Session()
+        # FastMCP HTTP transport uses a session id and requires X-Session-ID on
+        # subsequent requests after initialize.
         self.session_id: Optional[str] = "1"
 
         # Ensure server is reachable
         self._check_server()
+
+        # Pre-seed a session id for servers that require X-Session-ID on all
+        # requests. Many FastMCP deployments key sessions by initialize request id;
+        # the bridge will update this if the server provides X-Session-ID.
+        self.session_id = "1"
 
     def _check_server(self) -> None:
         """Check if server is reachable."""
@@ -71,52 +78,85 @@ class HTTPBridge:
             JSON-RPC response object
         """
         try:
+            # FastMCP HTTP transport requires clients to accept both JSON and SSE.
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
             }
+
+            # FastMCP uses a session id; in practice this is the value of the
+            # initialization request id. Use that as the session id unless the
+            # server later provides X-Session-ID.
             if self.session_id:
+                # Some FastMCP deployments expect lowercase header names.
                 headers["X-Session-ID"] = self.session_id
                 headers["x-session-id"] = self.session_id
 
-            # FastMCP serves MCP at /mcp; POST to base path, not /messages
+            # Borealis FastMCP HTTP transport serves the MCP endpoint at
+            #   http://HOST:PORT/mcp
+            # and accepts JSON-RPC POSTs directly at that path.
+            #
+            # Older bridge versions attempted POST to /messages which is not
+            # served by this server.
             response = self.session.post(
-                self.server_url,
+                f"{self.server_url}",
                 json=request,
                 headers=headers,
                 timeout=30,
             )
             response.raise_for_status()
 
+            # Extract session ID from response if provided. If the server does not
+            # provide one, keep the existing session id (set from initialize id).
             if "X-Session-ID" in response.headers:
                 self.session_id = response.headers["X-Session-ID"]
             elif self.session_id is None and request.get("method") == "initialize":
-                self.session_id = str(request.get("id", "1"))
+                # Fallback for servers that key sessions by initialize request id.
+                self.session_id = str(request.get("id"))
 
-            # FastMCP may return JSON or SSE
+            # FastMCP may return server responses as:
+            # - application/json
+            # - text/event-stream (SSE) with one or more "data: {json}" lines
             content_type = (response.headers.get("Content-Type") or "").lower()
             text = response.text
 
             if "text/event-stream" in content_type or text.lstrip().startswith("event:"):
+                # Parse first JSON object from an SSE message
                 for line in text.splitlines():
                     line = line.strip()
                     if line.startswith("data:"):
-                        data = line[len("data:"):].strip()
+                        data = line[len("data:") :].strip()
                         if data:
                             return json.loads(data)
                 return {
                     "jsonrpc": "2.0",
                     "id": request.get("id"),
-                    "error": {"code": -32000, "message": "SSE response without JSON data"},
+                    "error": {
+                        "code": -32000,
+                        "message": "HTTP server returned SSE without JSON data",
+                    },
                 }
 
             return response.json()
 
         except requests.exceptions.RequestException as e:
+            # Include server response body when available (very helpful for 400s).
+            body = ""
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    body = resp.text
+                except Exception:
+                    body = ""
+
+            msg = f"HTTP request failed: {str(e)}"
+            if body:
+                msg = f"{msg} | body={body}"
+
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
-                "error": {"code": -32000, "message": f"HTTP request failed: {str(e)}"},
+                "error": {"code": -32000, "message": msg},
             }
 
     def run(self) -> None:

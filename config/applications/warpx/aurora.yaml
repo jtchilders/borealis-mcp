@@ -1,0 +1,38 @@
+# WarpX application configuration for Aurora
+#
+# This is based on known-good PBS scripts used for WarpX Python PICMI tests.
+
+# Optional: central WarpX install prefix (future shared install)
+# warpx_prefix: "/opt/aurora/apps/warpx/<version>"
+
+# Current per-user profile (replace with central install when available)
+profile_source: "$HOME/aurora_warpx.profile"
+
+# Current per-user venv (replace with central install venv when available)
+venv_activate: "/home/${USER}/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
+
+# Some runs explicitly load these modules
+modules:
+  - "adios2/git.86a48b9-cpu"
+  - "hdf5/1.14.6"
+
+mpi:
+  command: "mpiexec"
+  env_flag: "-genvall"
+  flags: []
+  # Avoid core 0 on socket 0 and core 52 on socket 1
+  cpu_bind: "--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+  # 1 rank per PVC tile. Convention: gpuNumber.tileNumber
+  gpu_bind: "--gpu-bind=list:0.0:0.1:1.0:1.1:2.0:2.1:3.0:3.1:4.0:4.1:5.0:5.1"
+
+environment:
+  MPIR_CVAR_ENABLE_GPU: "1"
+  ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+
+defaults:
+  queue: "debug"
+  walltime: "00:30:00"
+  filesystems: "home:flare"
+  job_name: "warpx"
+  ranks_per_node: 12
+  threads_per_rank: 1
