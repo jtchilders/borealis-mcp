@@ -57,9 +57,12 @@ def _split_stage_paths(stage_paths: str) -> List[str]:
 
 # Maps sim_type → (gen CLI subcommand, validate CLI subcommand, default dim)
 _SIM_TYPES: Dict[str, tuple] = {
-    "electrostatic_plasma": ("gen-electrostatic-plasma-native", "validate-electrostatic-plasma", 1),
-    "hybrid_plasma":        ("gen-hybrid-plasma-native",        "validate-hybrid-plasma",        1),
-    "laser_acceleration":   ("gen-laser-acceleration-native",   "validate-laser-acceleration",   2),
+    "electrostatic_plasma":   ("gen-electrostatic-plasma-native",   "validate-electrostatic-plasma",   1),
+    "hybrid_plasma":          ("gen-hybrid-plasma-native",          "validate-hybrid-plasma",           1),
+    "ion_beam_instability":   ("gen-ion-beam-instability-native",   "validate-ion-beam-instability",   1),
+    "laser_acceleration":     ("gen-laser-acceleration-native",     "validate-laser-acceleration",     2),
+    "magnetic_reconnection":  ("gen-magnetic-reconnection-native",  "validate-magnetic-reconnection",  2),
+    "pwfa":                   ("gen-pwfa-native",                   "validate-pwfa",                   2),
     "uniform_plasma":       ("gen-uniform-plasma-native",       "validate-uniform-plasma",       3),
 }
 
@@ -582,9 +585,13 @@ class Application(ApplicationBase):
             build_warpx_native_submit_script as the inputs_file argument.
 
             Supported sim_type values:
-            - "hybrid_plasma"      — 1D/2D/3D hybrid-PIC (kinetic ions + fluid electrons)
-            - "laser_acceleration" — 2D/3D laser wakefield acceleration (LWFA)
-            - "uniform_plasma"     — 3D uniform plasma (electrons + background ions)
+            - "electrostatic_plasma"  — 1D/2D/3D ES-PIC with Poisson solver; optional EB
+            - "hybrid_plasma"         — 1D/2D/3D hybrid-PIC (kinetic ions + fluid electrons)
+            - "ion_beam_instability"  — 1D/2D/3D two-species hybrid-PIC beam R-instability
+            - "laser_acceleration"    — 2D/3D LWFA with Gaussian laser pulse
+            - "magnetic_reconnection" — 2D hybrid-PIC Harris-sheet reconnection
+            - "pwfa"                  — 2D/3D beam-driven PWFA with moving window
+            - "uniform_plasma"        — 3D uniform plasma (electrons + background ions)
 
             All fields in spec are optional; omitted values use warpx-inputgen
             defaults.  Typical hybrid_plasma keys: dim, number_of_cells,
