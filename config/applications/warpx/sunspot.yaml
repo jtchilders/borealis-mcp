@@ -1,19 +1,15 @@
-# WarpX application configuration for Aurora
+# WarpX application configuration for Sunspot
 #
-# This is based on known-good PBS scripts used for WarpX Python PICMI tests.
-
-# Optional: central WarpX install prefix (future shared install)
-# warpx_prefix: "/opt/aurora/apps/warpx/<version>"
+# Sunspot is the Aurora test and development system; it shares the same
+# hardware architecture and /flare filesystem as Aurora, so WarpX install
+# paths and MPI/GPU bindings are identical.
 
 profile_source: "$HOME/aurora_warpx.profile"
 
 # Shared WarpX science venv — contains pywarpx (compiled), PICMI, warpx-inputgen, etc.
 venv_activate: "/flare/catalyst/world_shared/zippy/warpx/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
 
-# Some runs explicitly load these modules
-modules:
-  - "adios2/git.86a48b9-cpu"
-  - "hdf5/1.14.6"
+modules: []
 
 mpi:
   command: "mpiexec"
@@ -29,9 +25,9 @@ environment:
   ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
 
 defaults:
-  queue: "debug"
+  queue: "workq"
   walltime: "00:30:00"
-  filesystems: "home:flare"
+  filesystems: "home"
   job_name: "warpx"
   ranks_per_node: 12
   threads_per_rank: 1

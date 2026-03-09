@@ -14,8 +14,10 @@ Key design points:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -47,6 +49,45 @@ def _split_stage_paths(stage_paths: str) -> List[str]:
     if not stage_paths:
         return []
     return [p.strip() for p in stage_paths.split(",") if p.strip()]
+
+
+# ---------------------------------------------------------------------------
+# warpx-inputgen integration helpers
+# ---------------------------------------------------------------------------
+
+# Maps sim_type → (gen CLI subcommand, validate CLI subcommand, default dim)
+_SIM_TYPES: Dict[str, tuple] = {
+    "electrostatic_plasma": ("gen-electrostatic-plasma-native", "validate-electrostatic-plasma", 1),
+    "hybrid_plasma":        ("gen-hybrid-plasma-native",        "validate-hybrid-plasma",        1),
+    "laser_acceleration":   ("gen-laser-acceleration-native",   "validate-laser-acceleration",   2),
+    "uniform_plasma":       ("gen-uniform-plasma-native",       "validate-uniform-plasma",       3),
+}
+
+
+def _find_inputgen_bin(inputgen_bin: Optional[str], venv_activate: Optional[str]) -> Optional[str]:
+    """Locate the warpx-inputgen entry-point script.
+
+    Search order:
+    1. ``inputgen_bin`` config key (explicit path).
+    2. Derived from ``venv_activate``: same bin/ directory, name warpx-inputgen.
+    3. PATH via shutil.which.
+
+    Returns the resolved path string, or None if not found.
+    """
+    if inputgen_bin:
+        p = Path(os.path.expandvars(os.path.expanduser(inputgen_bin)))
+        if p.exists():
+            return str(p)
+
+    if venv_activate:
+        derived = (
+            Path(os.path.expandvars(os.path.expanduser(venv_activate))).parent
+            / "warpx-inputgen"
+        )
+        if derived.exists():
+            return str(derived)
+
+    return shutil.which("warpx-inputgen")
 
 
 class Application(ApplicationBase):
@@ -90,6 +131,14 @@ class Application(ApplicationBase):
         warpx_prefix = (app_config or {}).get("warpx_prefix")
         profile_source_default = (app_config or {}).get("profile_source")
         venv_activate_default = (app_config or {}).get("venv_activate")
+
+        # Native binary mode config
+        warpx_bin_dir: Optional[str] = (app_config or {}).get("warpx_bin_dir")
+        ld_library_path_prepend: List[str] = (app_config or {}).get("ld_library_path_prepend", [])
+
+        # inputgen: optional explicit path to warpx-inputgen binary;
+        # falls back to derivation from venv_activate, then PATH.
+        inputgen_bin_default: Optional[str] = (app_config or {}).get("inputgen_bin")
 
         default_queue = defaults.get("queue", "debug")
         default_walltime = defaults.get("walltime", "00:30:00")
@@ -319,6 +368,310 @@ class Application(ApplicationBase):
             }
 
         @mcp.tool()
+        def build_warpx_native_submit_script(
+            run_dir: str,
+            inputs_file: str,
+            dim: int = 1,
+            cli_overrides: str = "",
+            num_nodes: int = 1,
+            ranks_per_node: int = default_ranks_per_node,
+            threads_per_rank: int = default_threads_per_rank,
+            account: str = default_account,
+            walltime: str = default_walltime,
+            queue: str = default_queue,
+            job_name: str = default_job_name,
+            filesystems: Optional[str] = default_filesystems,
+            profile_source: Optional[str] = None,
+            workspace_id: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            """Generate a PBS submit script for a WarpX native binary run.
+
+            The native WarpX binary is located automatically by scanning
+            `warpx_bin_dir` (from aurora.yaml) for a file matching
+            `warpx.{dim}d.*`.  No Python driver or venv is needed.
+
+            The inputs file (a WarpX AMReX ParmParse file, typically generated
+            by `warpx-inputgen`) is staged into `run_dir` and referenced by
+            name when the binary is invoked.
+
+            Args:
+                run_dir: Directory where the run will be performed.
+                inputs_file: Path to the WarpX ParmParse inputs file to stage.
+                dim: Simulation dimensionality (1, 2, or 3).  Used to select
+                    the correct binary variant (warpx.{dim}d.*).
+                cli_overrides: Additional ParmParse key=value overrides appended
+                    to the mpiexec command line (e.g. "max_step=10 warpx.verbose=2").
+                num_nodes: PBS select count.
+                ranks_per_node: MPI ranks per node.
+                threads_per_rank: Threads per MPI rank.
+                account: PBS account/project.
+                walltime: PBS walltime (HH:MM:SS).
+                queue: PBS queue.
+                job_name: Job name.
+                filesystems: PBS filesystems string (e.g. "home:flare").
+                profile_source: Optional profile script to source in job.
+                workspace_id: Optional Borealis workspace id for tracking.
+
+            Returns:
+                Dict with run_dir, script_path, workspace_id (if available), and
+                submit_pbs_job parameters.
+            """
+            if workspace_manager is None:
+                return {"error": "Workspace manager not available", "status": "failed"}
+
+            if not warpx_bin_dir:
+                return {
+                    "error": (
+                        "warpx_bin_dir is not configured in aurora.yaml. "
+                        "Add 'warpx_bin_dir: /path/to/warpx/bin' to the WarpX app config."
+                    ),
+                    "status": "failed",
+                }
+
+            try:
+                account = validate_account(account)
+                validate_walltime(walltime)
+                validate_node_count(num_nodes)
+            except Exception as e:
+                return {"error": str(e), "status": "failed"}
+
+            if dim not in (1, 2, 3):
+                return {"error": f"dim must be 1, 2, or 3; got {dim}", "status": "failed"}
+
+            run_path = Path(run_dir).expanduser().resolve()
+            try:
+                run_path.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return {"error": f"Failed to create run_dir {run_path}: {e}", "status": "failed"}
+
+            if workspace_id:
+                ws = workspace_manager.get_workspace(workspace_id)
+                if not ws:
+                    return {"error": f"Workspace {workspace_id} not found", "status": "failed"}
+            else:
+                try:
+                    ws = workspace_manager.create_workspace(
+                        job_name=job_name,
+                        metadata={
+                            "application": "warpx",
+                            "run_mode": "native",
+                            "run_dir": str(run_path),
+                            "dim": dim,
+                            "num_nodes": num_nodes,
+                            "ranks_per_node": ranks_per_node,
+                            "threads_per_rank": threads_per_rank,
+                            "queue": queue,
+                            "walltime": walltime,
+                            "filesystems": filesystems,
+                        },
+                    )
+                    workspace_id = ws.workspace_id
+                except OSError as e:
+                    return {"error": f"Failed to create workspace: {e}", "status": "failed"}
+
+            # Stage inputs file into run directory
+            inputs_src = Path(inputs_file).expanduser().resolve()
+            if not inputs_src.exists():
+                return {"error": f"inputs_file not found: {inputs_src}", "status": "failed"}
+            if not inputs_src.is_file():
+                return {"error": f"inputs_file is not a file: {inputs_src}", "status": "failed"}
+
+            inputs_dst = run_path / inputs_src.name
+            if inputs_src.resolve() != inputs_dst.resolve():
+                try:
+                    shutil.copy2(inputs_src, inputs_dst)
+                except OSError as e:
+                    return {"error": f"Failed to stage inputs_file into run_dir: {e}", "status": "failed"}
+
+            resolved_profile_source = profile_source or profile_source_default
+
+            template = WarpXTemplates.generate_native_submit_script(
+                system_config=system_config,
+                job_name=job_name,
+                account=account,
+                queue=queue,
+                walltime=walltime,
+                filesystems=filesystems,
+                run_dir=str(run_path),
+                modules=modules,
+                env_vars=env_vars,
+                ld_library_path_prepend=ld_library_path_prepend,
+                profile_source=resolved_profile_source,
+                warpx_bin_dir=warpx_bin_dir,
+                dim=dim,
+                mpi_command=mpi_command,
+                mpi_env_flag=mpi_env_flag,
+                mpi_flags=mpi_extra_flags,
+                num_nodes=num_nodes,
+                ranks_per_node=ranks_per_node,
+                threads_per_rank=threads_per_rank,
+                inputs_basename=inputs_dst.name,
+                cli_overrides=cli_overrides,
+                cpu_bind=cpu_bind,
+                gpu_bind=gpu_bind,
+            )
+
+            script_path = run_path / "submit.sh"
+            try:
+                script_path.write_text(template)
+                script_path.chmod(script_path.stat().st_mode | 0o111)
+            except OSError as e:
+                return {"error": f"Failed to write submit script: {e}", "status": "failed"}
+
+            workspace_manager.update_workspace(
+                workspace_id,
+                script_path=str(script_path),
+                metadata={
+                    **(ws.metadata or {}),
+                    "run_dir": str(run_path),
+                    "inputs_file": inputs_dst.name,
+                    "dim": dim,
+                    "cli_overrides": cli_overrides,
+                    "num_nodes": num_nodes,
+                    "ranks_per_node": ranks_per_node,
+                    "threads_per_rank": threads_per_rank,
+                    "queue": queue,
+                    "walltime": walltime,
+                    "filesystems": filesystems,
+                    "job_name": job_name,
+                },
+            )
+
+            logger.info(f"Generated WarpX native submit script: {script_path}")
+
+            return {
+                "status": "created",
+                "application": "warpx",
+                "run_mode": "native",
+                "workspace_id": workspace_id,
+                "run_dir": str(run_path),
+                "script_path": str(script_path),
+                "inputs_file": str(inputs_dst),
+                "submission": {
+                    "queue": queue,
+                    "walltime": walltime,
+                    "select_spec": str(num_nodes),
+                    "filesystems": filesystems,
+                    "account": account,
+                    "job_name": job_name,
+                },
+                "mpi": {
+                    "command": mpi_command,
+                    "num_nodes": num_nodes,
+                    "ranks_per_node": ranks_per_node,
+                    "total_ranks": num_nodes * ranks_per_node,
+                    "threads_per_rank": threads_per_rank,
+                    "cpu_bind": cpu_bind,
+                    "gpu_bind": gpu_bind,
+                },
+            }
+
+        @mcp.tool()
+        def generate_warpx_inputs(
+            sim_type: str,
+            spec: Dict[str, Any],
+            out_dir: str,
+            output_filename: str = "inputs",
+            validate_only: bool = False,
+        ) -> Dict[str, Any]:
+            """Generate a WarpX native inputs file from a simulation spec dict.
+
+            Uses warpx-inputgen to validate and generate a WarpX ParmParse
+            inputs file from a high-level simulation specification.  The
+            resulting inputs file can be passed directly to
+            build_warpx_native_submit_script as the inputs_file argument.
+
+            Supported sim_type values:
+            - "hybrid_plasma"      — 1D/2D/3D hybrid-PIC (kinetic ions + fluid electrons)
+            - "laser_acceleration" — 2D/3D laser wakefield acceleration (LWFA)
+            - "uniform_plasma"     — 3D uniform plasma (electrons + background ions)
+
+            All fields in spec are optional; omitted values use warpx-inputgen
+            defaults.  Typical hybrid_plasma keys: dim, number_of_cells,
+            lower_bound, upper_bound, field_bc, max_steps, Te, n0_ref, substeps,
+            ion_density, ion_mass_amu, ion_temperature_eV, ppc, B0, const_dt,
+            diag_period.
+
+            Args:
+                sim_type: Simulation family (see above).
+                spec: Flat dict of simulation parameters.
+                out_dir: Directory where the inputs file will be written.
+                output_filename: Name of the generated inputs file (default: "inputs").
+                validate_only: If True, validate spec without writing inputs.
+
+            Returns:
+                Dict with ok (bool), inputs_path (str, if generated), issues
+                (list), and any other fields from warpx-inputgen output.
+            """
+            if sim_type not in _SIM_TYPES:
+                return {
+                    "ok": False,
+                    "error": f"Unknown sim_type {sim_type!r}. Must be one of: {sorted(_SIM_TYPES)}",
+                }
+
+            gen_cmd, val_cmd, default_dim = _SIM_TYPES[sim_type]
+
+            inputgen_bin = _find_inputgen_bin(inputgen_bin_default, venv_activate_default)
+            if not inputgen_bin:
+                return {
+                    "ok": False,
+                    "error": (
+                        "warpx-inputgen not found.  "
+                        "It is provided by pywarpx — ensure pywarpx is installed in "
+                        "the WarpX science venv (venv_activate in the WarpX YAML).  "
+                        "Alternatively set inputgen_bin explicitly in the YAML."
+                    ),
+                }
+
+            out_path = Path(out_dir).expanduser().resolve()
+            try:
+                out_path.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return {"ok": False, "error": f"Failed to create out_dir {out_path}: {e}"}
+
+            spec_file = out_path / "_inputgen_spec.json"
+            try:
+                spec_file.write_text(json.dumps(spec, indent=2))
+            except OSError as e:
+                return {"ok": False, "error": f"Failed to write spec: {e}"}
+
+            try:
+                if validate_only:
+                    cmd = [inputgen_bin, val_cmd, str(spec_file)]
+                else:
+                    inputs_out = out_path / output_filename
+                    cmd = [inputgen_bin, gen_cmd, str(spec_file), "--out", str(inputs_out)]
+
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                except subprocess.TimeoutExpired:
+                    return {"ok": False, "error": "warpx-inputgen timed out after 60 s"}
+                except OSError as e:
+                    return {"ok": False, "error": f"Failed to run warpx-inputgen: {e}"}
+
+                try:
+                    data = json.loads(result.stdout)
+                except Exception:
+                    data = {
+                        "ok": result.returncode == 0,
+                        "raw_stdout": result.stdout[:2000],
+                    }
+
+                if result.returncode != 0 and result.stderr:
+                    data.setdefault("stderr", result.stderr[:1000])
+
+                if not validate_only and data.get("ok"):
+                    data["inputs_path"] = str(inputs_out)
+                    data["dim"] = spec.get("dim", default_dim)
+
+                return data
+            finally:
+                try:
+                    spec_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        @mcp.tool()
         def get_warpx_info() -> Dict[str, Any]:
             """Return WarpX configuration details for the current system."""
 
@@ -342,6 +695,11 @@ class Application(ApplicationBase):
                 "warpx_prefix": warpx_prefix,
                 "profile_source": profile_source_default,
                 "venv_activate": venv_activate_default,
+                "native_mode": {
+                    "warpx_bin_dir": warpx_bin_dir or "(not configured)",
+                    "ld_library_path_prepend": ld_library_path_prepend,
+                    "tool": "build_warpx_native_submit_script",
+                },
                 "modules": modules,
                 "environment": env_vars,
                 "mpi": {
@@ -352,12 +710,40 @@ class Application(ApplicationBase):
                     "gpu_bind": gpu_bind,
                 },
                 "workspace_base_path": workspace_base,
-                "example": (
-                    "build_warpx_submit_script("
-                    "run_dir='/lus/flare/projects/<proj>/runs/case1', "
-                    "driver_script='/path/to/inputs_case.py', "
-                    "driver_args='--dim 3 --test', "
-                    "stage_paths='/path/to/mesh.h5,/path/to/analysis.py', "
-                    "num_nodes=1, account='<proj>')"
-                ),
+                "inputgen": {
+                    "tool": "generate_warpx_inputs",
+                    "warpx_inputgen_bin": (
+                        _find_inputgen_bin(inputgen_bin_default, venv_activate_default)
+                        or "(not found — install pywarpx in the WarpX science venv)"
+                    ),
+                    "sim_types": sorted(_SIM_TYPES),
+                    "workflow": [
+                        "1. generate_warpx_inputs(sim_type, spec, out_dir) → {ok, inputs_path, dim}",
+                        "2. build_warpx_native_submit_script(run_dir=out_dir, inputs_file=inputs_path, dim=dim, ...)",
+                        "3. submit_pbs_job(workspace_id=..., queue=..., walltime=..., select_spec=..., filesystems=..., account=...)",
+                    ],
+                },
+                "examples": {
+                    "inputgen_hybrid": (
+                        "generate_warpx_inputs("
+                        "sim_type='hybrid_plasma', "
+                        "spec={'dim':1,'number_of_cells':[1024],'lower_bound':[0.0],'upper_bound':[0.01024],"
+                        "'field_bc':['periodic'],'max_steps':100,'Te':10.0,'substeps':40,"
+                        "'ion_density':1e20,'B0':[0,0,0.25],'const_dt':2e-9,'ppc':64}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "picmi": (
+                        "build_warpx_submit_script("
+                        "run_dir='/lus/flare/projects/<proj>/runs/case1', "
+                        "driver_script='/path/to/inputs_case.py', "
+                        "driver_args='--dim 3 --test', "
+                        "num_nodes=1, account='<proj>')"
+                    ),
+                    "native": (
+                        "build_warpx_native_submit_script("
+                        "run_dir='/lus/flare/projects/<proj>/runs/hybrid1', "
+                        "inputs_file='/path/to/inputs', "
+                        "dim=1, num_nodes=1, account='<proj>')"
+                    ),
+                },
             }
