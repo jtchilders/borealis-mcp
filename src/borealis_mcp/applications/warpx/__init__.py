@@ -685,6 +685,33 @@ class Application(ApplicationBase):
               to nearest amr_blocking_factor multiple; requires lower_bound and
               upper_bound to also be set in spec).
 
+            Diagnostics (all sim_types): diag_period (int; output interval in steps),
+              diag_fields (list of str; field components to write, e.g. ["Ex","By","Bz"]),
+              diag_format ("openpmd" | "plotfile"; default varies by sim type),
+              write_species (bool; include particle data in the field diagnostic).
+
+            Reduced diagnostics (all sim_types): reduced_diags (list of dicts).
+              Each dict must have a "type" key (string) from:
+                Simple (no extra keys required):
+                  "ParticleEnergy", "ParticleMomentum", "FieldEnergy", "FieldMomentum",
+                  "FieldMaximum", "FieldPoyntingFlux", "RhoMaximum", "ParticleNumber",
+                  "LoadBalanceCosts", "LoadBalanceEfficiency", "Timestep"
+                Species-required (add "species": "<name>"):
+                  "BeamRelevant", "ParticleExtrema"
+                Detailed types:
+                  "FieldProbe"      — add probe_geometry ("Point"/"Line"/"Plane"),
+                                      x_probe, y_probe, z_probe, [z1_probe, resolution]
+                  "FieldReduction"  — add reduction_type ("Maximum"/"Minimum"/"Integral"),
+                                      reduced_function (parser expression)
+                  "ParticleHistogram" — add species, bin_number, bin_min, bin_max,
+                                        histogram_function, [normalization, filter_function]
+                  "ChargeOnEB"      — add weighting_function (optional parser expression)
+              Optional per-entry: "name" (default: type.lower()), "period" (0=use diag_period),
+              "path" (default: "diags/").
+              Example: reduced_diags=[{"type":"FieldEnergy","period":10},
+                                       {"type":"FieldProbe","probe_geometry":"Point",
+                                        "z_probe":0.05}]
+
             Args:
                 sim_type: Simulation family (see above).
                 spec: Flat dict of simulation parameters.
@@ -999,6 +1026,26 @@ class Application(ApplicationBase):
                         "driver_script='/path/to/inputs_case.py', "
                         "driver_args='--dim 3 --test', "
                         "num_nodes=1, account='<proj>')"
+                    ),
+                    "picmi_generators": (
+                        "# PICMI script generators — invoked directly via warpx-inputgen.\n"
+                        "# These produce an editable Python PICMI driver script (not a native inputs file).\n"
+                        "# Use build_warpx_submit_script(driver_script=...) to run the resulting .py file.\n"
+                        "#\n"
+                        "# Available subcommands (sim_type → CLI command):\n"
+                        "#   electromagnetic_pic    → warpx-inputgen gen-electromagnetic-pic\n"
+                        "#   electrostatic_pic      → warpx-inputgen gen-electrostatic-pic\n"
+                        "#   hybrid_plasma          → warpx-inputgen gen-hybrid-plasma\n"
+                        "#   electrostatic_plasma   → warpx-inputgen gen-electrostatic-plasma\n"
+                        "#   pwfa                   → warpx-inputgen gen-pwfa\n"
+                        "#   magnetic_reconnection  → warpx-inputgen gen-magnetic-reconnection\n"
+                        "#   ion_beam_instability   → warpx-inputgen gen-ion-beam-instability\n"
+                        "#   laser_acceleration     → warpx-inputgen gen-laser-acceleration\n"
+                        "#\n"
+                        "# Example usage (hybrid_plasma → PICMI script):\n"
+                        "#   warpx-inputgen gen-hybrid-plasma "
+                        "'{\"B0\":[0,0,0.25],\"const_dt\":1.3e-9}' --out /path/to/hybrid.py\n"
+                        "# Then submit via build_warpx_submit_script(run_dir=..., driver_script='hybrid.py')"
                     ),
                     "native": (
                         "build_warpx_native_submit_script("
