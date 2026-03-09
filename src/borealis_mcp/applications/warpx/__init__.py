@@ -68,6 +68,17 @@ _SIM_TYPES: Dict[str, tuple] = {
     "electrostatic_pic":      ("gen-electrostatic-pic-native",      "validate-electrostatic-pic",      1),
 }
 
+_PICMI_SIM_TYPES: Dict[str, str] = {
+    "electromagnetic_pic":   "gen-electromagnetic-pic",
+    "electrostatic_pic":     "gen-electrostatic-pic",
+    "hybrid_plasma":         "gen-hybrid-plasma",
+    "electrostatic_plasma":  "gen-electrostatic-plasma",
+    "pwfa":                  "gen-pwfa",
+    "magnetic_reconnection": "gen-magnetic-reconnection",
+    "ion_beam_instability":  "gen-ion-beam-instability",
+    "laser_acceleration":    "gen-laser-acceleration",
+}
+
 
 def _find_inputgen_bin(inputgen_bin: Optional[str], venv_activate: Optional[str]) -> Optional[str]:
     """Locate the warpx-inputgen entry-point script.
@@ -792,6 +803,116 @@ class Application(ApplicationBase):
                     pass
 
         @mcp.tool()
+        def generate_warpx_picmi(
+            sim_type: str,
+            spec: Dict[str, Any],
+            out_dir: str,
+            output_filename: str = "driver.py",
+        ) -> Dict[str, Any]:
+            """Generate a WarpX PICMI Python driver script from a simulation spec dict.
+
+            Produces an editable Python driver script using the pywarpx PICMI interface.
+            Unlike generate_warpx_inputs() which writes a native ParmParse inputs file,
+            the output here is a .py file — submit it via
+            build_warpx_submit_script(run_dir=..., driver_script=...).
+
+            Supported sim_type values:
+            - "electromagnetic_pic"    — multi-species EM-PIC (Yee/PSATD solver)
+            - "electrostatic_pic"      — multi-species ES-PIC (Poisson solver)
+            - "hybrid_plasma"          — kinetic ions + fluid electrons (Ohm's law)
+            - "electrostatic_plasma"   — simple 1-3D ES plasma (electrons + optional ions)
+            - "pwfa"                   — beam-driven plasma wake-field accelerator
+            - "magnetic_reconnection"  — 2D hybrid-PIC Harris-sheet reconnection
+            - "ion_beam_instability"   — two-species hybrid-PIC beam R-instability
+            - "laser_acceleration"     — laser wake-field accelerator (Gaussian pulse)
+
+            PICMI-specific notes:
+            - The generated script is a starting point meant for manual editing — add
+              custom diagnostics, Python callbacks, or non-standard injection as needed.
+            - magnetic_reconnection: Harris-sheet density n(z)=n0/cosh^2(z/delta) cannot
+              be expressed as a picmi.UniformDistribution; the generated script uses
+              uniform density with a prominent comment marking the limitation.
+
+            All spec keys from generate_warpx_inputs apply (dim, number_of_cells,
+            lower_bound, upper_bound, field_bc, max_steps, diag_period, diag_fields,
+            diag_format, write_species, reduced_diags, amr_*, dx_target, etc.).
+
+            Workflow:
+            1. generate_warpx_picmi(sim_type, spec, out_dir) -> {ok, script_path}
+            2. build_warpx_submit_script(run_dir=out_dir, driver_script=script_path, ...)
+            3. submit_pbs_job(...)
+
+            Args:
+                sim_type: PICMI simulation family (see above).
+                spec: Flat dict of simulation parameters (same keys as native generator).
+                out_dir: Directory where the PICMI driver script will be written.
+                output_filename: Name of the generated Python file (default: "driver.py").
+
+            Returns:
+                Dict with ok (bool), script_path (str, if generated), issues (list).
+            """
+            if sim_type not in _PICMI_SIM_TYPES:
+                return {
+                    "ok": False,
+                    "error": (f"Unknown sim_type {sim_type!r}. "
+                              f"Must be one of: {sorted(_PICMI_SIM_TYPES)}"),
+                }
+
+            picmi_cmd = _PICMI_SIM_TYPES[sim_type]
+            inputgen_bin = _find_inputgen_bin(inputgen_bin_default, venv_activate_default)
+            if not inputgen_bin:
+                return {
+                    "ok": False,
+                    "error": (
+                        "warpx-inputgen not found.  "
+                        "It is provided by pywarpx — ensure pywarpx is installed in "
+                        "the WarpX science venv (venv_activate in the WarpX YAML).  "
+                        "Alternatively set inputgen_bin explicitly in the YAML."
+                    ),
+                }
+
+            out_path = Path(out_dir).expanduser().resolve()
+            try:
+                out_path.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return {"ok": False, "error": f"Failed to create out_dir {out_path}: {e}"}
+
+            spec_file = out_path / "_inputgen_picmi_spec.json"
+            try:
+                spec_file.write_text(json.dumps(spec, indent=2))
+            except OSError as e:
+                return {"ok": False, "error": f"Failed to write spec file: {e}"}
+
+            try:
+                picmi_out = out_path / output_filename
+                cmd = [inputgen_bin, picmi_cmd, str(spec_file), "--out", str(picmi_out)]
+
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                except subprocess.TimeoutExpired:
+                    return {"ok": False, "error": "warpx-inputgen timed out after 60 s"}
+                except OSError as e:
+                    return {"ok": False, "error": f"Failed to run warpx-inputgen: {e}"}
+
+                try:
+                    data = json.loads(result.stdout)
+                except Exception:
+                    data = {"ok": result.returncode == 0, "raw_stdout": result.stdout[:2000]}
+
+                if result.returncode != 0 and result.stderr:
+                    data.setdefault("stderr", result.stderr[:1000])
+
+                if data.get("ok"):
+                    data["script_path"] = str(picmi_out)
+
+                return data
+            finally:
+                try:
+                    spec_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        @mcp.tool()
         def suggest_warpx_cells(
             lower_bound: List[float],
             upper_bound: List[float],
@@ -1027,25 +1148,25 @@ class Application(ApplicationBase):
                         "driver_args='--dim 3 --test', "
                         "num_nodes=1, account='<proj>')"
                     ),
-                    "picmi_generators": (
-                        "# PICMI script generators — invoked directly via warpx-inputgen.\n"
-                        "# These produce an editable Python PICMI driver script (not a native inputs file).\n"
-                        "# Use build_warpx_submit_script(driver_script=...) to run the resulting .py file.\n"
-                        "#\n"
-                        "# Available subcommands (sim_type → CLI command):\n"
-                        "#   electromagnetic_pic    → warpx-inputgen gen-electromagnetic-pic\n"
-                        "#   electrostatic_pic      → warpx-inputgen gen-electrostatic-pic\n"
-                        "#   hybrid_plasma          → warpx-inputgen gen-hybrid-plasma\n"
-                        "#   electrostatic_plasma   → warpx-inputgen gen-electrostatic-plasma\n"
-                        "#   pwfa                   → warpx-inputgen gen-pwfa\n"
-                        "#   magnetic_reconnection  → warpx-inputgen gen-magnetic-reconnection\n"
-                        "#   ion_beam_instability   → warpx-inputgen gen-ion-beam-instability\n"
-                        "#   laser_acceleration     → warpx-inputgen gen-laser-acceleration\n"
-                        "#\n"
-                        "# Example usage (hybrid_plasma → PICMI script):\n"
-                        "#   warpx-inputgen gen-hybrid-plasma "
-                        "'{\"B0\":[0,0,0.25],\"const_dt\":1.3e-9}' --out /path/to/hybrid.py\n"
-                        "# Then submit via build_warpx_submit_script(run_dir=..., driver_script='hybrid.py')"
+                    "picmi_generator_hybrid": (
+                        "generate_warpx_picmi("
+                        "sim_type='hybrid_plasma', "
+                        "spec={'dim':1,'number_of_cells':[512],'lower_bound':[0.0],'upper_bound':[0.064],"
+                        "'field_bc':['periodic'],'max_steps':1000,'Te':0.05,'substeps':40,"
+                        "'n0_ref':3.3e22,'ion_density':3.3e22,'B0':[0,0,0.25],'const_dt':1.3e-9,"
+                        "'diag_period':100}, "
+                        "out_dir='/path/to/run', output_filename='hybrid_picmi.py')"
+                    ),
+                    "picmi_generator_em_pic": (
+                        "generate_warpx_picmi("
+                        "sim_type='electromagnetic_pic', "
+                        "spec={'dim':2,'number_of_cells':[256,512],"
+                        "'lower_bound':[-50e-6,0.0],'upper_bound':[50e-6,200e-6],"
+                        "'field_bc':['periodic','pml'],'max_steps':500,"
+                        "'species':[{'name':'electrons','charge':-1,'mass_amu':5.486e-4,'density':1e24,'ppc':4},"
+                        "{'name':'protons','charge':1,'mass_amu':1.007276,'density':1e24,'ppc':4}],"
+                        "'diag_period':50}, "
+                        "out_dir='/path/to/run', output_filename='em_pic_picmi.py')"
                     ),
                     "native": (
                         "build_warpx_native_submit_script("
