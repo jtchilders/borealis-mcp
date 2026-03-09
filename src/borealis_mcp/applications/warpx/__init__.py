@@ -63,7 +63,9 @@ _SIM_TYPES: Dict[str, tuple] = {
     "laser_acceleration":     ("gen-laser-acceleration-native",     "validate-laser-acceleration",     2),
     "magnetic_reconnection":  ("gen-magnetic-reconnection-native",  "validate-magnetic-reconnection",  2),
     "pwfa":                   ("gen-pwfa-native",                   "validate-pwfa",                   2),
-    "uniform_plasma":       ("gen-uniform-plasma-native",       "validate-uniform-plasma",       3),
+    "uniform_plasma":         ("gen-uniform-plasma-native",         "validate-uniform-plasma",         3),
+    "electromagnetic_pic":    ("gen-electromagnetic-pic-native",    "validate-electromagnetic-pic",    2),
+    "electrostatic_pic":      ("gen-electrostatic-pic-native",      "validate-electrostatic-pic",      1),
 }
 
 
@@ -636,6 +638,39 @@ class Application(ApplicationBase):
               upper_bound, field_bc, max_steps, cfl, plasma_density,
               B0 ([Bx,By,Bz] T), diag_period.
 
+            electromagnetic_pic: General multi-species EM-PIC.  Domain keys:
+              dim, number_of_cells, lower_bound, upper_bound, field_bc.
+              Solver keys: max_steps, cfl, maxwell_solver (yee/ckc/psatd/none),
+              particle_pusher (boris/vay/higuera), current_deposition.
+              Optional asymmetric BCs: field_bc_lo, field_bc_hi (lists of len dim).
+              species: nested list of dicts — each dict has name, charge (q_e units),
+                mass_amu, injection_style, density, ppc, temperature_eV,
+                xmin/xmax/ymin/ymax/zmin/zmax (slab bounds), and optional physics:
+                do_field_ionization, physical_element, ionization_initial_level,
+                ionization_product_species; do_qed_breit_wheeler, qed_bw_ele_product,
+                qed_bw_pos_product; do_qed_quantum_sync, qed_qs_phot_product;
+                do_classical_radiation_reaction; injection_style="none" for products.
+              collisions: nested list of dicts — name, type (coulomb/nuclearfusion),
+                species (2 names), CoulombLog (0=auto); for nuclearfusion:
+                product_species, event_multiplier (1e10–1e18), probability_target_value.
+              Optional laser: wavelength, a0, waist, duration, focal_position_z,
+                centroid_position_z, laser_direction, laser_polarization.
+              Optional: moving_window (bool), moving_window_direction.
+              Optional implicit EM: implicit_enabled=true, implicit_const_dt,
+                implicit_theta, implicit_solver_type, implicit_max_iters.
+              Optional EB: eb_implicit_function, eb_potential, stl_file.
+              Optional ext_bfield: Bx_expression, By_expression, Bz_expression.
+              diag_period, diag_fields.
+
+            electrostatic_pic: General multi-species ES-PIC (Poisson solver, no EM waves).
+              Same domain keys as electromagnetic_pic.
+              Solver keys: max_steps, const_dt (required), poisson_solver (multigrid/fft),
+                particle_pusher (boris/vay), electrostatic_mode (labframe/relativistic),
+                poisson_precision.
+              species and collisions: same format as electromagnetic_pic.
+              Optional EB, ext_bfield: same keys as electromagnetic_pic.
+              diag_period, diag_fields.
+
             Args:
                 sim_type: Simulation family (see above).
                 spec: Flat dict of simulation parameters.
@@ -832,6 +867,58 @@ class Application(ApplicationBase):
                         "spec={'dim':3,'number_of_cells':[32,32,32],'lower_bound':[0.0,0.0,0.0],'upper_bound':[0.01,0.01,0.01],"
                         "'field_bc':['periodic','periodic','periodic'],'max_steps':100,"
                         "'plasma_density':1e20,'B0':[0,0,0.1],'diag_period':25}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "electromagnetic_pic": (
+                        "generate_warpx_inputs("
+                        "sim_type='electromagnetic_pic', "
+                        "spec={"
+                        "'dim':2,'number_of_cells':[256,512],"
+                        "'lower_bound':[-50e-6,0.0],'upper_bound':[50e-6,200e-6],"
+                        "'field_bc':['periodic','pml'],'max_steps':500,'cfl':0.99,"
+                        "'maxwell_solver':'yee','particle_pusher':'boris',"
+                        "'species':["
+                        "{'name':'electrons','charge':-1,'mass_amu':5.486e-4,'density':1e24,'ppc':4,'temperature_eV':1000.0,'zmin':20e-6,'zmax':180e-6},"
+                        "{'name':'protons','charge':1,'mass_amu':1.007276,'density':1e24,'ppc':4,'zmin':20e-6,'zmax':180e-6}"
+                        "],"
+                        "'collisions':[{'name':'coul_ei','type':'coulomb','species':['electrons','protons'],'CoulombLog':10.0}],"
+                        "'diag_period':50,'diag_fields':['Ex','Ey','Ez','Bx','By','Bz','rho']}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "electromagnetic_pic_nuclear_fusion": (
+                        "generate_warpx_inputs("
+                        "sim_type='electromagnetic_pic', "
+                        "spec={"
+                        "'dim':1,'number_of_cells':[512],"
+                        "'lower_bound':[0.0],'upper_bound':[0.001],"
+                        "'field_bc':['periodic'],'max_steps':2000,'cfl':0.99,"
+                        "'species':["
+                        "{'name':'deuterium','charge':1,'mass_amu':2.014,'density':1e26,'ppc':4},"
+                        "{'name':'tritium','charge':1,'mass_amu':3.016,'density':1e26,'ppc':4},"
+                        "{'name':'helium4','charge':2,'mass_amu':4.003,'injection_style':'none'},"
+                        "{'name':'neutron','charge':0,'mass_amu':1.009,'injection_style':'none'}"
+                        "],"
+                        "'collisions':[{'name':'dt_fusion','type':'nuclearfusion',"
+                        "'species':['deuterium','tritium'],"
+                        "'product_species':['helium4','neutron'],'event_multiplier':1e13}],"
+                        "'diag_period':100,'diag_fields':['Ex','Bz','rho']}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "electrostatic_pic": (
+                        "generate_warpx_inputs("
+                        "sim_type='electrostatic_pic', "
+                        "spec={"
+                        "'dim':1,'number_of_cells':[400],"
+                        "'lower_bound':[0.0],'upper_bound':[0.01],"
+                        "'field_bc':['periodic'],'max_steps':500,'const_dt':5e-12,"
+                        "'poisson_solver':'multigrid',"
+                        "'species':["
+                        "{'name':'electrons','charge':-1,'mass_amu':5.486e-4,'density':1e18,'ppc':16,'temperature_eV':10.0},"
+                        "{'name':'nitrogen','charge':7,'mass_amu':14.003,'density':1e18,'ppc':4,"
+                        "'do_field_ionization':True,'physical_element':'N',"
+                        "'ionization_initial_level':0,'ionization_product_species':'electrons'}"
+                        "],"
+                        "'diag_period':50,'diag_fields':['Ex','rho']}, "
                         "out_dir='/path/to/run')"
                     ),
                     "picmi": (
