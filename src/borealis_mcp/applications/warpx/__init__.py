@@ -594,10 +594,47 @@ class Application(ApplicationBase):
             - "uniform_plasma"        — 3D uniform plasma (electrons + background ions)
 
             All fields in spec are optional; omitted values use warpx-inputgen
-            defaults.  Typical hybrid_plasma keys: dim, number_of_cells,
-            lower_bound, upper_bound, field_bc, max_steps, Te, n0_ref, substeps,
-            ion_density, ion_mass_amu, ion_temperature_eV, ppc, B0, const_dt,
-            diag_period.
+            defaults.  Key parameters by sim_type:
+
+            electrostatic_plasma: dim, number_of_cells, lower_bound, upper_bound,
+              field_bc, max_steps, n0 (m⁻³), Te (eV), ion_mass_amu, ppc, diag_period.
+              Optional EB: eb_implicit_function, eb_potential, stl_file.
+
+            hybrid_plasma: dim, number_of_cells, lower_bound, upper_bound,
+              field_bc, max_steps, Te, n0_ref, substeps, ion_density,
+              ion_mass_amu, ion_temperature_eV, ppc, B0 ([Bx,By,Bz] T),
+              const_dt, resistivity, diag_period.
+
+            ion_beam_instability: same domain/solver/ohm keys as hybrid_plasma
+              plus core_density, core_mass_amu, core_temperature_eV, core_ppc,
+              beam_density, beam_mass_amu, beam_temperature_eV, beam_ppc,
+              beam_drift_velocity (m/s), core_drift_velocity (0=auto), B0, const_dt.
+
+            laser_acceleration: dim, number_of_cells, lower_bound, upper_bound,
+              field_bc, max_steps, cfl, plasma_density, plasma_zmin, plasma_zmax,
+              wavelength (m), a0, waist (m), duration (s), focal_position_z,
+              centroid_position_z, diag_period.
+              Implicit solver: implicit_enabled=true, implicit_const_dt,
+              implicit_theta, implicit_solver_type, implicit_max_iters.
+
+            magnetic_reconnection: dim (default 2), number_of_cells,
+              lower_bound, upper_bound, field_bc, max_steps, Te, n0_ref,
+              substeps, ion_density, ion_mass_amu, ion_temperature_eV, ppc,
+              B0 (scalar T), Bg (guide field T), delta (sheet half-width m),
+              dB_fraction (perturbation fraction), const_dt.
+
+            pwfa: dim (default 2), number_of_cells, lower_bound, upper_bound,
+              field_bc, max_steps, cfl, plasma_density, plasma_zmin, plasma_zmax,
+              driver_x_rms, driver_y_rms, driver_z_rms, driver_z_cut,
+              driver_uz_m, driver_uz_th, driver_q_tot, driver_z_mean,
+              driver_n_macro, moving_window (bool).
+              Optional witness: witness_x_rms, witness_y_rms, witness_z_rms,
+              witness_z_cut, witness_uz_m, witness_uz_th, witness_q_tot,
+              witness_z_mean, witness_n_macro.
+
+            uniform_plasma: dim (default 3), number_of_cells, lower_bound,
+              upper_bound, field_bc, max_steps, cfl, plasma_density,
+              B0 ([Bx,By,Bz] T), diag_period.
 
             Args:
                 sim_type: Simulation family (see above).
@@ -731,12 +768,70 @@ class Application(ApplicationBase):
                     ],
                 },
                 "examples": {
-                    "inputgen_hybrid": (
+                    "electrostatic_plasma": (
+                        "generate_warpx_inputs("
+                        "sim_type='electrostatic_plasma', "
+                        "spec={'dim':1,'number_of_cells':[100],'lower_bound':[0.0],'upper_bound':[0.005],"
+                        "'field_bc':['periodic'],'max_steps':200,'n0':1e16,'Te':1.0,"
+                        "'ion_mass_amu':1.0,'ppc':100,'diag_period':50}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "hybrid_plasma": (
                         "generate_warpx_inputs("
                         "sim_type='hybrid_plasma', "
-                        "spec={'dim':1,'number_of_cells':[1024],'lower_bound':[0.0],'upper_bound':[0.01024],"
-                        "'field_bc':['periodic'],'max_steps':100,'Te':10.0,'substeps':40,"
-                        "'ion_density':1e20,'B0':[0,0,0.25],'const_dt':2e-9,'ppc':64}, "
+                        "spec={'dim':1,'number_of_cells':[512],'lower_bound':[0.0],'upper_bound':[0.064],"
+                        "'field_bc':['periodic'],'max_steps':1000,'Te':0.05,'substeps':40,"
+                        "'n0_ref':3.3e22,'ion_density':3.3e22,'ion_mass_amu':1.0,'ion_temperature_eV':0.05,"
+                        "'ppc':64,'B0':[0,0,0.25],'const_dt':1.3e-9,'diag_period':100}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "ion_beam_instability": (
+                        "generate_warpx_inputs("
+                        "sim_type='ion_beam_instability', "
+                        "spec={'dim':1,'number_of_cells':[1024],'lower_bound':[0.0],'upper_bound':[0.256],"
+                        "'field_bc':['periodic'],'max_steps':2000,'Te':0.05,'substeps':40,"
+                        "'n0_ref':3.3e22,'core_density':2.97e22,'core_mass_amu':1.0,'core_temperature_eV':0.05,'core_ppc':256,"
+                        "'beam_density':3.3e21,'beam_mass_amu':1.0,'beam_temperature_eV':0.05,'beam_ppc':64,"
+                        "'beam_drift_velocity':2.4e6,'core_drift_velocity':0.0,"
+                        "'B0':[0,0,0.25],'const_dt':1.3e-10,'diag_period':100}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "laser_acceleration": (
+                        "generate_warpx_inputs("
+                        "sim_type='laser_acceleration', "
+                        "spec={'dim':2,'number_of_cells':[128,512],'lower_bound':[-2e-5,0.0],'upper_bound':[2e-5,2e-4],"
+                        "'field_bc':['periodic','open'],'max_steps':50,'cfl':0.99,"
+                        "'plasma_density':1e24,'plasma_zmin':2e-5,'plasma_zmax':1.8e-4,"
+                        "'wavelength':8e-7,'a0':2.0,'waist':1.5e-5,'duration':3e-14,"
+                        "'focal_position_z':6e-5,'centroid_position_z':0.0,'diag_period':25}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "magnetic_reconnection": (
+                        "generate_warpx_inputs("
+                        "sim_type='magnetic_reconnection', "
+                        "spec={'dim':2,'number_of_cells':[512,256],'lower_bound':[0.0,-0.025],'upper_bound':[0.050,0.025],"
+                        "'field_bc':['periodic','periodic'],'max_steps':2000,'Te':0.05,'substeps':40,"
+                        "'n0_ref':1e20,'ion_density':1e20,'ion_mass_amu':0.22,'ion_temperature_eV':0.25,'ppc':100,"
+                        "'B0':0.1,'Bg':0.0,'delta':1.25e-3,'dB_fraction':0.01,'const_dt':1e-11,'diag_period':100}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "pwfa": (
+                        "generate_warpx_inputs("
+                        "sim_type='pwfa', "
+                        "spec={'dim':2,'number_of_cells':[128,512],'lower_bound':[-1.5e-4,-2e-4],'upper_bound':[1.5e-4,0.0],"
+                        "'field_bc':['open','open'],'max_steps':1000,'cfl':0.99,"
+                        "'plasma_density':1e22,'plasma_zmin':-2e-4,'plasma_zmax':0.0,"
+                        "'driver_x_rms':2e-6,'driver_y_rms':2e-6,'driver_z_rms':4e-6,"
+                        "'driver_uz_m':2000.0,'driver_q_tot':-1e-9,'driver_z_mean':-5e-5,'driver_n_macro':1000,"
+                        "'moving_window':True,'diag_period':50}, "
+                        "out_dir='/path/to/run')"
+                    ),
+                    "uniform_plasma": (
+                        "generate_warpx_inputs("
+                        "sim_type='uniform_plasma', "
+                        "spec={'dim':3,'number_of_cells':[32,32,32],'lower_bound':[0.0,0.0,0.0],'upper_bound':[0.01,0.01,0.01],"
+                        "'field_bc':['periodic','periodic','periodic'],'max_steps':100,"
+                        "'plasma_density':1e20,'B0':[0,0,0.1],'diag_period':25}, "
                         "out_dir='/path/to/run')"
                     ),
                     "picmi": (
