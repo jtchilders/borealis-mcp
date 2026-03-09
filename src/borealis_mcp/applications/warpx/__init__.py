@@ -671,6 +671,20 @@ class Application(ApplicationBase):
               Optional EB, ext_bfield: same keys as electromagnetic_pic.
               diag_period, diag_fields.
 
+            AMR (all sim_types): amr_max_level (default 0; set 1+ to enable refinement),
+              amr_blocking_factor (default 8; number_of_cells must be divisible per axis),
+              amr_ref_ratio (2 or 4; default 2), amr_max_grid_size (default 128),
+              amr_tag_by ("box"/"plasma"/"function"/"none"; default "box").
+              For tag_by="box": fine_tag_lo, fine_tag_hi (physical coord lists of len dim;
+                required when amr_max_level > 0 with default tag_by="box").
+              For tag_by="function": ref_patch_function (WarpX parser expression).
+              For tag_by="plasma": warpx.refine_plasma = 1 (no extra keys needed).
+
+            Resolution helper (all sim_types): dx_target (float; auto-computes
+              number_of_cells from lower_bound + upper_bound + dx_target, rounded up
+              to nearest amr_blocking_factor multiple; requires lower_bound and
+              upper_bound to also be set in spec).
+
             Args:
                 sim_type: Simulation family (see above).
                 spec: Flat dict of simulation parameters.
@@ -749,6 +763,64 @@ class Application(ApplicationBase):
                     spec_file.unlink(missing_ok=True)
                 except OSError:
                     pass
+
+        @mcp.tool()
+        def suggest_warpx_cells(
+            lower_bound: List[float],
+            upper_bound: List[float],
+            dx_target: float,
+            blocking_factor: int = 8,
+        ) -> Dict[str, Any]:
+            """Given physical domain bounds and target cell size, return number_of_cells.
+
+            Rounds up each axis to the nearest multiple of blocking_factor so that
+            the result is compatible with AMReX AMR (amr.blocking_factor).
+
+            Args:
+                lower_bound: Physical lower bound per axis (list of floats, e.g. [0.0, 0.0]).
+                upper_bound: Physical upper bound per axis (list of floats, e.g. [1e-3, 2e-3]).
+                dx_target: Target cell size in metres (same units as bounds).
+                blocking_factor: AMReX blocking factor (default 8; use amr_blocking_factor
+                    value from your spec). Must be a power of 2.
+
+            Returns:
+                Dict with number_of_cells (list of ints), blocking_factor (int),
+                and dx_actual (list of actual cell sizes achieved).
+            """
+            inputgen_bin = _find_inputgen_bin(inputgen_bin_default, venv_activate_default)
+            if not inputgen_bin:
+                return {
+                    "ok": False,
+                    "error": (
+                        "warpx-inputgen not found.  "
+                        "Ensure pywarpx is installed in the WarpX science venv."
+                    ),
+                }
+
+            cmd = [
+                inputgen_bin, "suggest-cells",
+                "--lower-bound", " ".join(str(x) for x in lower_bound),
+                "--upper-bound", " ".join(str(x) for x in upper_bound),
+                "--dx-target", str(dx_target),
+                "--blocking-factor", str(blocking_factor),
+            ]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "error": "warpx-inputgen suggest-cells timed out"}
+            except OSError as e:
+                return {"ok": False, "error": f"Failed to run warpx-inputgen: {e}"}
+
+            try:
+                data = json.loads(result.stdout)
+                data["ok"] = True
+                return data
+            except Exception:
+                return {
+                    "ok": False,
+                    "error": "suggest-cells returned unexpected output",
+                    "raw": result.stdout[:500],
+                }
 
         @mcp.tool()
         def get_warpx_info() -> Dict[str, Any]:
