@@ -15,6 +15,7 @@ Key design points:
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -104,6 +105,195 @@ def _find_inputgen_bin(inputgen_bin: Optional[str], venv_activate: Optional[str]
             return str(derived)
 
     return shutil.which("warpx-inputgen")
+
+
+# ---------------------------------------------------------------------------
+# Physics constants (SI)
+# ---------------------------------------------------------------------------
+_Q   = 1.602176634e-19    # C
+_ME  = 9.1093837015e-31   # kg
+_EPS = 8.8541878128e-12   # F/m
+_MU0 = 1.25663706212e-6   # H/m
+_C   = 299792458.0        # m/s
+_AMU = 1.66053906660e-27  # kg/amu
+
+
+def _build_physics_summary(sim_type: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive physics quantities from a simulation spec for post-submission reporting.
+
+    Returns a structured dict with grid, diagnostics, and sim-type-specific
+    plasma parameters: frequencies, scale lengths, stability checks, physical
+    end time, and number of characteristic periods covered.
+    """
+    out: Dict[str, Any] = {"sim_type": sim_type}
+
+    # --- Grid summary ---
+    lo = spec.get("lower_bound", [])
+    hi = spec.get("upper_bound", [])
+    nc = spec.get("number_of_cells", [])
+    dx: List[float] = []
+    if lo and hi and nc and len(lo) == len(hi) == len(nc):
+        dx = [(float(h) - float(l)) / int(n) for h, l, n in zip(hi, lo, nc)]
+        out["grid"] = {
+            "dim": spec.get("dim", len(nc)),
+            "cells": list(nc),
+            "lower_bound": list(lo),
+            "upper_bound": list(hi),
+            "dx_m": dx,
+        }
+
+    # --- Diagnostics summary ---
+    out["diagnostics"] = {
+        "period_steps": spec.get("diag_period"),
+        "fields": spec.get("diag_fields", []),
+        "format": spec.get("diag_format", "openpmd"),
+        "write_species": spec.get("write_species", False),
+        "reduced_diag_types": [r.get("type") for r in spec.get("reduced_diags", [])],
+    }
+
+    max_steps = spec.get("max_steps")
+    out["max_steps"] = max_steps
+
+    # -----------------------------------------------------------------------
+    # Sim-type-specific derived quantities
+    # -----------------------------------------------------------------------
+
+    if sim_type in ("electrostatic_plasma", "electrostatic_pic"):
+        if sim_type == "electrostatic_plasma":
+            n0 = float(spec.get("n0", 0) or 0)
+            Te = float(spec.get("Te", 1.0))
+        else:
+            species = spec.get("species", [])
+            ele = next((s for s in species if float(s.get("charge", 0)) < 0), {})
+            n0 = float(ele.get("density", 0) or 0)
+            Te = float(ele.get("temperature_eV", 1.0))
+            out["species"] = [
+                {
+                    "name": s.get("name"), "charge_qe": s.get("charge"),
+                    "mass_amu": s.get("mass_amu"), "density_m3": s.get("density"),
+                    "temperature_eV": s.get("temperature_eV"), "ppc": s.get("ppc"),
+                }
+                for s in species
+            ]
+        dt = spec.get("const_dt")
+        if n0 > 0:
+            omega_pe = math.sqrt(n0 * _Q**2 / (_ME * _EPS))
+            T_pe = 2 * math.pi / omega_pe
+            plasma: Dict[str, Any] = {
+                "n0_m3": n0, "Te_eV": Te,
+                "omega_pe_rad_s": omega_pe, "plasma_period_s": T_pe,
+            }
+            if Te > 0:
+                lam_D = math.sqrt(_EPS * Te * _Q / (n0 * _Q**2))
+                plasma["debye_length_m"] = lam_D
+                if dx:
+                    plasma["dx_over_debye"] = [d / lam_D for d in dx]
+            if dt:
+                plasma["const_dt_s"] = dt
+                plasma["omega_pe_dt"] = omega_pe * dt
+                plasma["stability"] = "ok" if omega_pe * dt < 2.0 else "UNSTABLE (omega_pe*dt >= 2)"
+                if max_steps:
+                    plasma["physical_end_time_s"] = max_steps * dt
+                    plasma["n_plasma_periods"] = max_steps * dt / T_pe
+            out["plasma"] = plasma
+
+    elif sim_type in ("hybrid_plasma", "ion_beam_instability", "magnetic_reconnection"):
+        n0 = float(spec.get("n0_ref", spec.get("ion_density", 0)) or 0)
+        B0_raw = spec.get("B0", [0, 0, 0])
+        B0 = (abs(float(B0_raw)) if isinstance(B0_raw, (int, float))
+              else math.sqrt(sum(float(b)**2 for b in B0_raw)) if B0_raw else 0.0)
+        ion_mass_amu = float(spec.get("ion_mass_amu", spec.get("core_mass_amu", 1.0)))
+        mi = ion_mass_amu * _AMU
+        dt = spec.get("const_dt")
+        hybrid: Dict[str, Any] = {
+            "n0_m3": n0, "B0_T": B0,
+            "ion_mass_amu": ion_mass_amu, "substeps": spec.get("substeps", 100),
+        }
+        if n0 > 0:
+            l_i = _C / math.sqrt(n0 * _Q**2 / (mi * _EPS))
+            hybrid["ion_skin_depth_m"] = l_i
+            if dx:
+                hybrid["dx_over_skin_depth"] = [d / l_i for d in dx]
+        if B0 > 0:
+            omega_ci = _Q * B0 / mi
+            T_ci = 2 * math.pi / omega_ci
+            hybrid["omega_ci_rad_s"] = omega_ci
+            hybrid["cyclotron_period_s"] = T_ci
+            if n0 > 0:
+                hybrid["Alfven_speed_m_s"] = B0 / math.sqrt(_MU0 * n0 * mi)
+            if dt:
+                hybrid["const_dt_s"] = dt
+                hybrid["omega_ci_dt"] = omega_ci * dt
+                if max_steps:
+                    hybrid["physical_end_time_s"] = max_steps * dt
+                    hybrid["n_cyclotron_periods"] = max_steps * dt / T_ci
+        if sim_type == "ion_beam_instability":
+            hybrid["beam_drift_velocity_m_s"] = spec.get("beam_drift_velocity")
+            hybrid["beam_density_m3"] = spec.get("beam_density")
+        elif sim_type == "magnetic_reconnection":
+            hybrid["sheet_halfwidth_m"] = spec.get("delta")
+            hybrid["guide_field_T"] = spec.get("Bg", 0)
+        out["hybrid"] = hybrid
+
+    elif sim_type == "electromagnetic_pic":
+        species = spec.get("species", [])
+        sp_list = []
+        for s in species:
+            n0 = float(s.get("density", 0) or 0)
+            charge = float(s.get("charge", 0))
+            mass_amu = float(s.get("mass_amu", 1.0))
+            entry: Dict[str, Any] = {
+                "name": s.get("name"), "charge_qe": charge, "mass_amu": mass_amu,
+                "density_m3": n0, "ppc": s.get("ppc"),
+                "temperature_eV": s.get("temperature_eV"),
+            }
+            if n0 > 0 and charge != 0:
+                m = mass_amu * _AMU
+                entry["plasma_freq_rad_s"] = math.sqrt(n0 * (charge * _Q)**2 / (m * _EPS))
+            sp_list.append(entry)
+        cfl = float(spec.get("cfl", 0.99))
+        em: Dict[str, Any] = {
+            "maxwell_solver": spec.get("maxwell_solver", "yee"),
+            "particle_pusher": spec.get("particle_pusher", "boris"),
+            "cfl": cfl, "species": sp_list,
+            "n_species": len(sp_list), "n_collisions": len(spec.get("collisions", [])),
+        }
+        if dx and max_steps:
+            dt_cfl = cfl * min(dx) / (_C * math.sqrt(spec.get("dim", len(dx))))
+            em["dt_cfl_s"] = dt_cfl
+            em["physical_end_time_s"] = max_steps * dt_cfl
+        out["em_pic"] = em
+
+    elif sim_type in ("laser_acceleration", "pwfa"):
+        n_p = float(spec.get("plasma_density", 0) or 0)
+        if n_p > 0:
+            omega_pe = math.sqrt(n_p * _Q**2 / (_ME * _EPS))
+            T_pe = 2 * math.pi / omega_pe
+            accel: Dict[str, Any] = {
+                "plasma_density_m3": n_p,
+                "omega_pe_rad_s": omega_pe,
+                "plasma_wavelength_m": 2 * math.pi * _C / omega_pe,
+                "plasma_period_s": T_pe,
+            }
+            if sim_type == "laser_acceleration":
+                accel["wavelength_m"] = spec.get("wavelength")
+                accel["a0"] = spec.get("a0")
+            else:
+                accel["driver_uz_m"] = spec.get("driver_uz_m")
+                accel["driver_q_tot_C"] = spec.get("driver_q_tot")
+            out["accelerator"] = accel
+
+    elif sim_type == "uniform_plasma":
+        n_p = float(spec.get("plasma_density", 0) or 0)
+        if n_p > 0:
+            omega_pe = math.sqrt(n_p * _Q**2 / (_ME * _EPS))
+            out["plasma"] = {
+                "plasma_density_m3": n_p,
+                "omega_pe_rad_s": omega_pe,
+                "plasma_period_s": 2 * math.pi / omega_pe,
+            }
+
+    return out
 
 
 class Application(ApplicationBase):
@@ -218,6 +408,20 @@ class Application(ApplicationBase):
             Returns:
                 Dict with run_dir, script_path, workspace_id (if available), and
                 submit_pbs_job parameters.
+
+            IMPORTANT — post-submission workflow:
+                After submit_pbs_job returns with a job_id, immediately report
+                the full submission summary to the user:
+                  - Job ID, system, queue, num_nodes, ranks_per_node, walltime
+                  - Simulation type, grid (cells, bounds, dx)
+                  - Key physics parameters from generate_warpx_picmi physics_summary
+                    (plasma frequency, Debye length or skin depth, stability check,
+                    physical end time, number of characteristic periods covered)
+                  - Diagnostic fields, format, and output path
+                  - How to check status: "qstat <job_id>" or get_job_status()
+                Do NOT poll or wait for the job to finish. WarpX production jobs
+                run for hours to days. The user will reconnect when ready to
+                analyse outputs.
             """
 
             if workspace_manager is None:
@@ -431,6 +635,20 @@ class Application(ApplicationBase):
             Returns:
                 Dict with run_dir, script_path, workspace_id (if available), and
                 submit_pbs_job parameters.
+
+            IMPORTANT — post-submission workflow:
+                After submit_pbs_job returns with a job_id, immediately report
+                the full submission summary to the user:
+                  - Job ID, system, queue, num_nodes, ranks_per_node, walltime
+                  - Simulation type, grid (cells, bounds, dx)
+                  - Key physics parameters from generate_warpx_inputs physics_summary
+                    (plasma frequency, Debye length or skin depth, stability check,
+                    physical end time, number of characteristic periods covered)
+                  - Diagnostic fields, format, and output path
+                  - How to check status: "qstat <job_id>" or get_job_status()
+                Do NOT poll or wait for the job to finish. WarpX production jobs
+                run for hours to days. The user will reconnect when ready to
+                analyse outputs.
             """
             if workspace_manager is None:
                 return {"error": "Workspace manager not available", "status": "failed"}
@@ -794,6 +1012,7 @@ class Application(ApplicationBase):
                 if not validate_only and data.get("ok"):
                     data["inputs_path"] = str(inputs_out)
                     data["dim"] = spec.get("dim", default_dim)
+                    data["physics_summary"] = _build_physics_summary(sim_type, spec)
 
                 return data
             finally:
@@ -904,6 +1123,7 @@ class Application(ApplicationBase):
 
                 if data.get("ok"):
                     data["script_path"] = str(picmi_out)
+                    data["physics_summary"] = _build_physics_summary(sim_type, spec)
 
                 return data
             finally:
@@ -1017,9 +1237,19 @@ class Application(ApplicationBase):
                     ),
                     "sim_types": sorted(_SIM_TYPES),
                     "workflow": [
-                        "1. generate_warpx_inputs(sim_type, spec, out_dir) → {ok, inputs_path, dim}",
-                        "2. build_warpx_native_submit_script(run_dir=out_dir, inputs_file=inputs_path, dim=dim, ...)",
-                        "3. submit_pbs_job(workspace_id=..., queue=..., walltime=..., select_spec=..., filesystems=..., account=...)",
+                        "1. generate_warpx_inputs(sim_type, spec, out_dir)"
+                        " → {ok, inputs_path, dim, physics_summary}",
+                        "2. build_warpx_native_submit_script(run_dir=out_dir,"
+                        " inputs_file=inputs_path, dim=dim, num_nodes=..., ...)"
+                        " → {status, workspace_id, submission, mpi}",
+                        "3. submit_pbs_job(workspace_id=..., queue=..., walltime=...,"
+                        " select_spec=..., filesystems=..., account=...)"
+                        " → {job_id, queue, status}",
+                        "4. IMMEDIATELY report full summary to user: job_id, queue,"
+                        " nodes, walltime, physics_summary (grid, plasma params,"
+                        " stability, end time, n periods), diagnostics, output path,"
+                        " and 'qstat <job_id>' to check status later.",
+                        "   Do NOT poll or wait — WarpX jobs run for hours to days.",
                     ],
                 },
                 "examples": {
