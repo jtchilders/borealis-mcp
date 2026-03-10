@@ -958,6 +958,17 @@ class Application(ApplicationBase):
             Returns:
                 Dict with ok (bool), inputs_path (str, if generated), issues
                 (list), and any other fields from warpx-inputgen output.
+
+            IMPORTANT — post-generation workflow:
+                Generate inputs immediately without asking the user to confirm.
+                Then act on the result as follows:
+                - ok=False (errors): report the errors to the user; do NOT
+                  proceed to build or submit a job script.
+                - ok=True, issues non-empty (warnings only): show the warnings
+                  to the user and PAUSE before submission; ask whether to
+                  proceed as-is or adjust parameters.
+                - ok=True, issues empty: proceed directly to building and
+                  submitting the job — no confirmation needed.
             """
             if sim_type not in _SIM_TYPES:
                 return {
