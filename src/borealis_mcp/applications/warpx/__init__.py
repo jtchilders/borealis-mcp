@@ -919,6 +919,13 @@ class Application(ApplicationBase):
               diag_format ("openpmd" | "plotfile"; default varies by sim type),
               write_species (bool; include particle data in the field diagnostic).
 
+            Checkpointing (all sim_types): checkpoint_int (int; write an AMReX checkpoint
+              every N steps using amr.check_int; None or omit = no checkpoint),
+              checkpoint_file (str; checkpoint directory basename, default "chk";
+              uses amr.check_file — NOT warpx.check_file which is unrecognized).
+              Example: checkpoint_int=600, checkpoint_file="chk" writes a restartable
+              checkpoint every 600 steps.
+
             Reduced diagnostics (all sim_types): reduced_diags (list of dicts).
               Each dict must have a "type" key (string) from:
                 Simple (no extra keys required):
