@@ -31,6 +31,7 @@ class PepperTemplates:
         gpu_affinity_script: Optional[str] = None,
         batch_size: int = 1024,
         cpu_bind_depth: int = 8,
+        pepper_env_script: Optional[str] = None,
         fullstack_setup: Optional[str] = None,
         pepper_setup: Optional[str] = None,
         workspace_path: Optional[str] = None,
@@ -59,15 +60,18 @@ class PepperTemplates:
             gpu_affinity_script: Optional path to GPU affinity script
             batch_size: Batch size for GPU processing (default 1024)
             cpu_bind_depth: Threads per rank for cpu-bind (default 8)
-            fullstack_setup: Path to fullstack setup.sh (e.g., /path/to/fullstack/setup.sh)
-            pepper_setup: Path to pepper setup.sh (e.g., /path/to/fullstack/pepper/setup.sh)
+            pepper_env_script: Path to combined env script (v2 installation, e.g., /soft/applications/hep/pepper/env/latest.sh)
+            fullstack_setup: Path to fullstack setup.sh (legacy, e.g., /path/to/fullstack/setup.sh)
+            pepper_setup: Path to pepper setup.sh (legacy, e.g., /path/to/fullstack/pepper/setup.sh)
             workspace_path: Path to workspace directory for logs and output
 
         Returns:
             Complete PBS submit script as string
         """
-        # Determine if we're using fullstack setup or direct executable
-        use_fullstack = fullstack_setup is not None and pepper_setup is not None
+        # Determine if we're using env script, fullstack setup, or direct executable
+        # Priority: pepper_env_script > fullstack_setup > direct executable
+        use_env_script = pepper_env_script is not None
+        use_fullstack = not use_env_script and fullstack_setup is not None and pepper_setup is not None
 
         # Use workspace_path if provided, otherwise fall back to PBS_O_WORKDIR
         if workspace_path:
@@ -77,7 +81,22 @@ class PepperTemplates:
         else:
             work_dir = "${PBS_O_WORKDIR}"
 
-        if use_fullstack:
+        if use_env_script:
+            # New v2 installation: single combined environment script
+            env_setup_section = f"""# Source Pepper environment (v2 installation)
+# This script sets up Kokkos, HDF5, LHAPDF, FORM, and Pepper
+source {pepper_env_script}
+PEPPER_EXE=$(which pepper)"""
+            pepper_exe_var = "${PEPPER_EXE}"
+            verify_exe_section = f"""# --- Verify Executable -------------------------------------------------------
+
+if [[ ! -x "${{PEPPER_EXE}}" ]]; then
+    echo "ERROR: Pepper executable not found after sourcing environment script"
+    echo "Environment script: {pepper_env_script}"
+    echo "PATH: $PATH"
+    exit 1
+fi"""
+        elif use_fullstack:
             # Use fullstack setup.sh scripts - pepper is found via PATH after sourcing
             env_setup_section = f"""# Source Pepper fullstack environment
 source {fullstack_setup}

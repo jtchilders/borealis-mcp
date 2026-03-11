@@ -70,7 +70,10 @@ class Application(ApplicationBase):
             default_pepper_path = app_config.get("defaults", {}).get(
                 "pepper_executable", ""
             )
-            # Fullstack setup paths (preferred over direct executable)
+            # New v2 installation: single combined environment script
+            pepper_env_script = app_config.get("pepper_env_script")
+            pepper_install_base = app_config.get("pepper_install_base")
+            # Legacy fullstack setup paths (for backwards compatibility)
             fullstack_setup = app_config.get("fullstack_setup")
             pepper_setup = app_config.get("pepper_setup")
         else:
@@ -84,6 +87,8 @@ class Application(ApplicationBase):
             default_walltime = "01:00:00"
             default_queue = "debug"
             default_pepper_path = ""
+            pepper_env_script = None
+            pepper_install_base = None
             fullstack_setup = None
             pepper_setup = None
 
@@ -167,11 +172,16 @@ class Application(ApplicationBase):
             # Resolve pepper executable: use provided value, fall back to config default
             resolved_pepper_executable = pepper_executable or default_pepper_path
 
-            # Validate: either fullstack setup or pepper_executable must be provided
-            use_fullstack = fullstack_setup is not None and pepper_setup is not None
-            if not use_fullstack and not resolved_pepper_executable:
+            # Determine setup mode:
+            # 1. New v2 installation: single pepper_env_script
+            # 2. Legacy fullstack: separate fullstack_setup and pepper_setup
+            # 3. Direct executable: pepper_executable path
+            use_env_script = pepper_env_script is not None
+            use_fullstack = not use_env_script and fullstack_setup is not None and pepper_setup is not None
+
+            if not use_env_script and not use_fullstack and not resolved_pepper_executable:
                 return {
-                    "error": "Either fullstack setup paths or pepper_executable is required.",
+                    "error": "Pepper setup required. Provide either pepper_env_script, fullstack setup paths, or pepper_executable.",
                     "status": "failed",
                 }
 
@@ -268,6 +278,7 @@ class Application(ApplicationBase):
                 pepper_executable=resolved_pepper_executable,
                 pepper_args=pepper_args,
                 use_gpu=use_gpu,
+                pepper_env_script=pepper_env_script,
                 fullstack_setup=fullstack_setup,
                 pepper_setup=pepper_setup,
                 workspace_path=workspace_info.path,
@@ -305,8 +316,8 @@ class Application(ApplicationBase):
                     "n_events": n_events,
                     "output_format": output_format,
                     "output_file": resolved_output_file if output_format != "disabled" else None,
-                    "setup_mode": "fullstack" if use_fullstack else "direct_executable",
-                    "executable": resolved_pepper_executable if not use_fullstack else "(via setup.sh)",
+                    "setup_mode": "env_script" if use_env_script else ("fullstack" if use_fullstack else "direct_executable"),
+                    "executable": "(via env script)" if use_env_script else (resolved_pepper_executable if not use_fullstack else "(via setup.sh)"),
                 },
                 "next_step": (
                     f"Submit job with: submit_pbs_job("
@@ -335,13 +346,27 @@ class Application(ApplicationBase):
             if workspace_manager:
                 workspace_base = str(workspace_manager.base_path)
 
+            # Determine setup mode for display
+            if pepper_env_script:
+                setup_mode = "env_script"
+                setup_info = pepper_env_script
+            elif fullstack_setup and pepper_setup:
+                setup_mode = "fullstack"
+                setup_info = f"{fullstack_setup} + {pepper_setup}"
+            else:
+                setup_mode = "direct_executable"
+                setup_info = default_pepper_path or "(not configured)"
+
             return {
                 "application": "pepper",
                 "description": self.description,
                 "version": "Pepper parton-level event generator",
                 "documentation": "https://spice-mc.gitlab.io/pepper/",
                 "system": system_config.display_name,
-                "setup_mode": "fullstack" if (fullstack_setup and pepper_setup) else "direct_executable",
+                "setup_mode": setup_mode,
+                "setup_info": setup_info,
+                "pepper_env_script": pepper_env_script,
+                "pepper_install_base": pepper_install_base,
                 "fullstack_setup": fullstack_setup,
                 "pepper_setup": pepper_setup,
                 "modules": modules,
