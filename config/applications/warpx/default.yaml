@@ -8,7 +8,7 @@
 
 # Profile script that sets up the environment (modules, paths, etc.)
 # Recommended to set to a centrally-installed default in the future.
-profile_source: "$HOME/aurora_warpx.profile"
+profile_source: "/flare/catalyst/world_shared/zippy/warpx/install/warpx/env/${WARPX_PLATFORM}_warpx.profile"
 
 # Python virtual environment activation script for WarpX/pywarpx
 # Recommended to set to a venv under warpx_prefix in the future.

@@ -166,7 +166,8 @@ def _build_physics_summary(sim_type: str, spec: Dict[str, Any]) -> Dict[str, Any
         else:
             species = spec.get("species", [])
             ele = next((s for s in species if float(s.get("charge", 0)) < 0), {})
-            n0 = float(ele.get("density", 0) or 0)
+            _raw_density = ele.get("density", 0)
+            n0 = float(_raw_density) if isinstance(_raw_density, (int, float)) else 0.0
             Te = float(ele.get("temperature_eV", 1.0))
             out["species"] = [
                 {
@@ -240,12 +241,13 @@ def _build_physics_summary(sim_type: str, spec: Dict[str, Any]) -> Dict[str, Any
         species = spec.get("species", [])
         sp_list = []
         for s in species:
-            n0 = float(s.get("density", 0) or 0)
+            _raw_density = s.get("density", 0)
+            n0 = float(_raw_density) if isinstance(_raw_density, (int, float)) else 0.0
             charge = float(s.get("charge", 0))
             mass_amu = float(s.get("mass_amu", 1.0))
             entry: Dict[str, Any] = {
                 "name": s.get("name"), "charge_qe": charge, "mass_amu": mass_amu,
-                "density_m3": n0, "ppc": s.get("ppc"),
+                "density_m3": _raw_density, "ppc": s.get("ppc"),
                 "temperature_eV": s.get("temperature_eV"),
             }
             if n0 > 0 and charge != 0:
@@ -1453,24 +1455,25 @@ class Application(ApplicationBase):
             cli_overrides: str = "",
             output_filename: str = "inputs",
         ) -> Dict[str, Any]:
-            """Generate WarpX native inputs, build a PBS submit script, and submit — all in one step.
+            """Generate WarpX native inputs, build a PBS submit script, and prepare for submission.
 
             This is the preferred tool for running a WarpX simulation.  It chains
-            generate_warpx_inputs → build_warpx_native_submit_script → submit_pbs_job
-            internally with the following automatic workflow:
+            generate_warpx_inputs → build_warpx_native_submit_script internally
+            and returns the full run summary for user review before submission.
 
-            AUTOMATED WORKFLOW (no user confirmation dialogs):
+            WORKFLOW:
                 1. Inputs are generated immediately.
-                2. ok=False (errors): return status="error"; do NOT build or submit.
-                3. ok=True with warnings: build the submit script, then return
-                   status="warnings" with inputs_path, script_path, workspace_id, and
-                   issues — do NOT submit.  Show warnings to the user and ask whether
-                   to proceed or adjust parameters.  To submit after review, call
-                   submit_pbs_job(workspace_id=<workspace_id>).
-                4. ok=True, no warnings: build submit script and submit; return
-                   status="submitted" with job_id.  Report full submission summary
-                   (job_id, queue, nodes, walltime, physics_summary) to the user.
-                   Do NOT poll — WarpX jobs run for hours to days.
+                2. ok=False (errors): return status="error"; do NOT build.
+                3. ok=True (with or without warnings): build the submit script,
+                   then return status="ready" with inputs_path, script_path,
+                   workspace_id, physics_summary, and any issues/warnings.
+                   Present the full run summary to the user (sim type, grid,
+                   physics parameters, node count, walltime, estimated
+                   node-hours) and ASK FOR CONFIRMATION before submitting.
+                   To submit after user confirms, call:
+                       submit_pbs_job(workspace_id=<workspace_id>)
+                   Do NOT auto-submit.  Do NOT poll after submission — WarpX
+                   jobs run for hours to days.
 
             sim_type and spec are identical to generate_warpx_inputs (all spec keys
             documented there apply here too, including checkpoint_int, diag_period, etc.).
@@ -1482,16 +1485,13 @@ class Application(ApplicationBase):
             Returns:
                 status="error":
                     {"ok": False, "status": "error", "issues": [...], ...}
-                status="warnings":
-                    {"ok": True, "status": "warnings", "inputs_path": "...",
-                     "workspace_id": "...", "script_path": "...", "issues": [...]}
-                status="submitted":
-                    {"ok": True, "status": "submitted", "job_id": "...",
-                     "inputs_path": "...", "workspace_id": "...", "script_path": "...",
-                     "physics_summary": {...}, "queue": "...", "system": "..."}
+                status="ready":
+                    {"ok": True, "status": "ready", "inputs_path": "...",
+                     "workspace_id": "...", "script_path": "...",
+                     "physics_summary": {...}, "queue": "...", "system": "...",
+                     "num_nodes": N, "walltime": "...", "issues": [...]}
+                    User must call submit_pbs_job(workspace_id=...) to submit.
             """
-            PBSException = get_pbs_exception_class()
-
             # --- Step 1: Generate inputs -----------------------------------------
             gen_result = generate_warpx_inputs(
                 sim_type=sim_type,
@@ -1528,61 +1528,23 @@ class Application(ApplicationBase):
             workspace_id = build_result.get("workspace_id")
             script_path = build_result.get("script_path")
 
-            # --- Step 3: Pause on warnings without submitting --------------------
-            if warnings:
-                return {
-                    "ok": True,
-                    "status": "warnings",
-                    "inputs_path": inputs_path,
-                    "workspace_id": workspace_id,
-                    "script_path": script_path,
-                    "issues": warnings,
-                }
-
-            # --- Step 4: No warnings — submit ------------------------------------
-            try:
-                resolved_account = validate_account(account or default_account)
-            except Exception as e:
-                return {"ok": False, "status": "error", "error": str(e)}
-
-            attrs: Dict[str, Any] = {"Account_Name": resolved_account}
-            if job_name:
-                attrs["Job_Name"] = job_name
-            resource_list: Dict[str, str] = {
-                "select": str(num_nodes),
-                "place": "scatter",
-                "walltime": walltime,
-            }
-            if filesystems:
-                resource_list["filesystems"] = filesystems
-            attrs["Resource_List"] = resource_list
-
+            # --- Step 3: Return ready status for user confirmation ----------------
             resolved_queue = queue
             if not resolved_queue:
                 dq = system_config.get_default_queue()
                 resolved_queue = dq.name if dq else "workq"
 
-            try:
-                with get_pbs_client(system_config) as pbs:
-                    job_id = pbs.submit(
-                        script_path=script_path, queue=resolved_queue, attrs=attrs
-                    )
-                if workspace_manager and workspace_id:
-                    workspace_manager.update_workspace(
-                        workspace_id, status="submitted", job_id=job_id
-                    )
-                return {
-                    "ok": True,
-                    "status": "submitted",
-                    "job_id": job_id,
-                    "queue": resolved_queue,
-                    "system": system_config.display_name,
-                    "inputs_path": inputs_path,
-                    "workspace_id": workspace_id,
-                    "script_path": script_path,
-                    "physics_summary": physics_summary,
-                }
-            except PBSException as e:
-                return {"ok": False, "status": "error", "error": str(e)}
-            except RuntimeError as e:
-                return {"ok": False, "status": "error", "error": str(e)}
+            return {
+                "ok": True,
+                "status": "ready",
+                "inputs_path": inputs_path,
+                "workspace_id": workspace_id,
+                "script_path": script_path,
+                "physics_summary": physics_summary,
+                "queue": resolved_queue,
+                "system": system_config.display_name,
+                "num_nodes": num_nodes,
+                "ranks_per_node": ranks_per_node,
+                "walltime": walltime,
+                "issues": warnings,
+            }

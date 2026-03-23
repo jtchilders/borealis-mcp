@@ -4,7 +4,7 @@
 # hardware architecture and /flare filesystem as Aurora, so WarpX install
 # paths and MPI/GPU bindings are identical.
 
-profile_source: "$HOME/aurora_warpx.profile"
+profile_source: "/flare/catalyst/world_shared/zippy/warpx/install/warpx/env/sunspot_warpx.profile"
 
 # Shared WarpX science venv — contains pywarpx (compiled), PICMI, warpx-inputgen, etc.
 venv_activate: "/flare/catalyst/world_shared/zippy/warpx/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
@@ -40,4 +40,4 @@ defaults:
 warpx_bin_dir: "/flare/catalyst/world_shared/zippy/warpx/install/warpx/bin"
 ld_library_path_prepend:
   - "/flare/catalyst/world_shared/zippy/warpx/install/warpx/lib"
-  - "/flare/catalyst/world_shared/zippy/warpx/install/openPMD/lib64"
+  - "/flare/catalyst/world_shared/zippy/warpx/install/openPMD_gnu/lib64"
