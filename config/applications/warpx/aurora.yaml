@@ -5,10 +5,10 @@
 # Optional: central WarpX install prefix (future shared install)
 # warpx_prefix: "/opt/aurora/apps/warpx/<version>"
 
-profile_source: "/flare/catalyst/world_shared/zippy/warpx/install/warpx/env/aurora_warpx.profile"
+profile_source: "/flare/catalyst/world_shared/warpx/install/warpx/env/aurora_warpx.profile"
 
 # Shared WarpX science venv — contains pywarpx (compiled), PICMI, warpx-inputgen, etc.
-venv_activate: "/flare/catalyst/world_shared/zippy/warpx/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
+venv_activate: "/flare/catalyst/world_shared/warpx/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
 
 # Some runs explicitly load these modules
 modules:
@@ -41,7 +41,7 @@ defaults:
 # inputgen_bin: "/path/to/warpx/venv/bin/warpx-inputgen"
 
 # Native binary mode (build_warpx_native_submit_script)
-warpx_bin_dir: "/flare/catalyst/world_shared/zippy/warpx/install/warpx/bin"
+warpx_bin_dir: "/flare/catalyst/world_shared/warpx/install/warpx/bin"
 ld_library_path_prepend:
-  - "/flare/catalyst/world_shared/zippy/warpx/install/warpx/lib"
-  - "/flare/catalyst/world_shared/zippy/warpx/install/openPMD_gnu/lib64"
+  - "/flare/catalyst/world_shared/warpx/install/warpx/lib"
+  - "/flare/catalyst/world_shared/warpx/install/openPMD_gnu/lib64"
