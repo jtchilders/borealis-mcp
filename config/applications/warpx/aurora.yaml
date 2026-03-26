@@ -12,8 +12,6 @@ venv_activate: "/flare/catalyst/world_shared/warpx/sw/aurora/gpu/venvs/warpx-aur
 
 # Some runs explicitly load these modules
 modules:
-  - "adios2/git.86a48b9-cpu"
-  - "hdf5/1.14.6"
 
 mpi:
   command: "mpiexec"

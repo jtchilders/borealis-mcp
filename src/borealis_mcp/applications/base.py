@@ -1,14 +1,14 @@
 """Base application interface for Borealis MCP."""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from fastmcp import FastMCP
 
 from borealis_mcp.config.system import SystemConfig
 
 if TYPE_CHECKING:
-    from borealis_mcp.core.workspace import WorkspaceManager
+    from borealis_mcp.core.workspace import WorkspaceInfo, WorkspaceManager
 
 
 class ApplicationBase(ABC):
@@ -135,6 +135,15 @@ class ApplicationBase(ABC):
             workspace_manager: Optional workspace manager for job workspaces
         """
         pass
+
+    def post_submit_hook(self, workspace_info: "WorkspaceInfo") -> Dict[str, Any]:
+        """Return extra fields to include in submit_pbs_job result.
+
+        Override to enrich the submission result with application-specific
+        data (e.g., physics_summary, run_dir, diagnostics config).
+        Default returns empty dict.
+        """
+        return {}
 
     def register_all(
         self,

@@ -317,6 +317,16 @@ class Application(ApplicationBase):
         # Intended for ALCF systems; can be extended later.
         return system_config.name in ["aurora", "polaris", "sunspot"]
 
+    def post_submit_hook(self, workspace_info) -> Dict[str, Any]:
+        """Enrich submit_pbs_job result with WarpX run details."""
+        meta = workspace_info.metadata or {}
+        result = {}
+        for key in ("run_dir", "physics_summary", "num_nodes", "ranks_per_node",
+                     "walltime", "job_name", "dim"):
+            if meta.get(key) is not None:
+                result[key] = meta[key]
+        return result
+
     def register_tools(
         self,
         mcp: FastMCP,
@@ -1527,6 +1537,13 @@ class Application(ApplicationBase):
 
             workspace_id = build_result.get("workspace_id")
             script_path = build_result.get("script_path")
+
+            # Store physics_summary in workspace so submit_pbs_job can return it
+            if workspace_id and physics_summary and workspace_manager:
+                workspace_manager.update_workspace(
+                    workspace_id,
+                    metadata={"physics_summary": physics_summary},
+                )
 
             # --- Step 3: Return ready status for user confirmation ----------------
             resolved_queue = queue

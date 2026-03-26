@@ -100,14 +100,15 @@ def create_server(
     # Register workspace management tools first (other tools may need it)
     workspace_manager = register_workspace_tools(mcp, current_system, config_loader)
 
-    # Register core PBS capabilities
-    register_pbs_tools(mcp, current_system, workspace_manager)
-    register_pbs_resources(mcp, current_system, config_loader)
-
-    # Auto-discover and register applications
+    # Auto-discover and register applications (before PBS tools so hooks are available)
     registry = ApplicationRegistry()
     registry.discover_applications()
     registry.register_all(mcp, current_system, config_loader, workspace_manager)
+
+    # Register core PBS capabilities (with application post-submit hooks)
+    post_submit_hooks = registry.get_post_submit_hooks()
+    register_pbs_tools(mcp, current_system, workspace_manager, post_submit_hooks)
+    register_pbs_resources(mcp, current_system, config_loader)
 
     # Register discovery tools (after applications so we can list them)
     register_discovery_tools(mcp, current_system, config_loader, registry)

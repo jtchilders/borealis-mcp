@@ -3,7 +3,7 @@
 import importlib
 import pkgutil
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from fastmcp import FastMCP
 
@@ -130,6 +130,15 @@ class ApplicationRegistry:
                 logger.info(f"Registered application: {name}")
             except Exception as e:
                 logger.error(f"Failed to register application {name}: {e}")
+
+    def get_post_submit_hooks(self) -> Dict[str, Callable]:
+        """Collect post_submit_hook callbacks from all registered applications."""
+        hooks = {}
+        for name, app in self._applications.items():
+            hook = getattr(app, "post_submit_hook", None)
+            if hook and callable(hook):
+                hooks[name] = hook
+        return hooks
 
     def get_application_info(self) -> List[Dict]:
         """
