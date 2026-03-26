@@ -20,7 +20,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 # Optional dependency during unit tests that only import templates.
 try:
@@ -106,6 +106,93 @@ def _find_inputgen_bin(inputgen_bin: Optional[str], venv_activate: Optional[str]
             return str(derived)
 
     return shutil.which("warpx-inputgen")
+
+
+# ---------------------------------------------------------------------------
+# PICMI API introspection
+# ---------------------------------------------------------------------------
+
+# Python snippet executed inside the warpx venv to introspect all PICMI classes.
+_PICMI_INTROSPECT_SCRIPT = r'''
+import inspect, json, sys
+from pywarpx import picmi
+
+results = []
+for name in sorted(dir(picmi)):
+    obj = getattr(picmi, name)
+    if not (isinstance(obj, type) and name[0].isupper()):
+        continue
+    try:
+        sig = str(inspect.signature(obj))
+    except (ValueError, TypeError):
+        sig = "()"
+    doc = inspect.getdoc(obj) or ""
+    results.append({"class": name, "signature": sig, "doc": doc})
+
+json.dump(results, sys.stdout)
+'''
+
+
+def _introspect_picmi(venv_activate: Optional[str]) -> str:
+    """Run introspection in the warpx venv and return markdown reference."""
+    import tempfile
+
+    if not venv_activate:
+        return "# PICMI API Reference\n\n*venv_activate not configured; cannot introspect.*\n"
+
+    venv_activate = os.path.expandvars(os.path.expanduser(venv_activate))
+    # Write script to a temp file to avoid shell quoting issues with -c
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False
+        ) as tmp:
+            tmp.write(_PICMI_INTROSPECT_SCRIPT)
+            tmp_path = tmp.name
+        cmd = f"source {venv_activate} && python {tmp_path}"
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return f"# PICMI API Reference\n\n*Introspection failed: {exc}*\n"
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    if result.returncode != 0:
+        return (
+            f"# PICMI API Reference\n\n*Introspection failed (exit {result.returncode}):*\n"
+            f"```\n{result.stderr[:500]}\n```\n"
+        )
+
+    try:
+        classes = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return "# PICMI API Reference\n\n*Failed to parse introspection output.*\n"
+
+    lines = [
+        "# pywarpx PICMI API Reference",
+        "",
+        "Auto-generated via runtime introspection of the installed pywarpx.",
+        "Use these class names, signatures, and parameters when writing PICMI driver scripts.",
+        "",
+    ]
+    for cls in classes:
+        lines.append(f"## `picmi.{cls['class']}`")
+        lines.append("")
+        lines.append(f"```python")
+        lines.append(f"picmi.{cls['class']}{cls['signature']}")
+        lines.append(f"```")
+        lines.append("")
+        if cls["doc"]:
+            lines.append(cls["doc"])
+            lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +413,23 @@ class Application(ApplicationBase):
             if meta.get(key) is not None:
                 result[key] = meta[key]
         return result
+
+    def register_resources(
+        self,
+        mcp: FastMCP,
+        system_config: SystemConfig,
+        app_config: Optional[Dict[str, Any]] = None,
+        workspace_manager: Optional["WorkspaceManager"] = None,
+    ) -> None:
+        venv_activate = (app_config or {}).get("venv_activate")
+        _cached: Dict[str, str] = {}
+
+        @mcp.resource("warpx://picmi-api")
+        def get_picmi_api() -> str:
+            """pywarpx PICMI class reference (signatures and docstrings) from the installed version."""
+            if "result" not in _cached:
+                _cached["result"] = _introspect_picmi(venv_activate)
+            return _cached["result"]
 
     def register_tools(
         self,
