@@ -1,7 +1,7 @@
 name: sunspot
 display_name: "Sunspot"
 facility: "Argonne Leadership Computing Facility (ALCF)"
-pbs_server: sunspot-pbs.alcf.anl.gov
+pbs_server: sunspot-pbs-0001.head.cm.sunspot.alcf.anl.gov
 
 hardware:
   total_nodes: 128

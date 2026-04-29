@@ -1,0 +1,45 @@
+# WarpX application configuration for Aurora
+#
+# This is based on known-good PBS scripts used for WarpX Python PICMI tests.
+
+# Optional: central WarpX install prefix (future shared install)
+# warpx_prefix: "/opt/aurora/apps/warpx/<version>"
+
+profile_source: "/flare/catalyst/world_shared/warpx/install/warpx/env/aurora_warpx.profile"
+
+# Shared WarpX science venv — contains pywarpx (compiled), PICMI, warpx-inputgen, etc.
+venv_activate: "/flare/catalyst/world_shared/warpx/sw/aurora/gpu/venvs/warpx-aurora/bin/activate"
+
+# Some runs explicitly load these modules
+modules:
+
+mpi:
+  command: "mpiexec"
+  env_flag: "-genvall"
+  flags: []
+  # Avoid core 0 on socket 0 and core 52 on socket 1
+  cpu_bind: "--cpu-bind=list:1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+  # 1 rank per PVC tile. Convention: gpuNumber.tileNumber
+  gpu_bind: "--gpu-bind=list:0.0:0.1:1.0:1.1:2.0:2.1:3.0:3.1:4.0:4.1:5.0:5.1"
+
+environment:
+  MPIR_CVAR_ENABLE_GPU: "1"
+  ZE_FLAT_DEVICE_HIERARCHY: "COMPOSITE"
+
+defaults:
+  queue: "debug"
+  walltime: "00:30:00"
+  filesystems: "home:flare"
+  job_name: "warpx"
+  ranks_per_node: 12
+  threads_per_rank: 1
+
+# inputgen: warpx-inputgen is auto-located in the same bin/ as venv_activate.
+# Override only if the binary lives elsewhere:
+# inputgen_bin: "/path/to/warpx/venv/bin/warpx-inputgen"
+
+# Native binary mode (build_warpx_native_submit_script)
+warpx_bin_dir: "/flare/catalyst/world_shared/warpx/install/warpx/bin"
+ld_library_path_prepend:
+  - "/flare/catalyst/world_shared/warpx/install/warpx/lib"
+  - "/flare/catalyst/world_shared/warpx/install/openPMD_gnu/lib64"

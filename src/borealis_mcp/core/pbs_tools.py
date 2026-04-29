@@ -2,7 +2,7 @@
 
 import os
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastmcp import FastMCP
 
@@ -28,6 +28,7 @@ def register_pbs_tools(
     mcp: FastMCP,
     system_config: SystemConfig,
     workspace_manager: Optional[WorkspaceManager] = None,
+    post_submit_hooks: Optional[Dict[str, Callable]] = None,
 ) -> None:
     """
     Register core PBS tools with the MCP server.
@@ -36,6 +37,8 @@ def register_pbs_tools(
         mcp: FastMCP server instance
         system_config: Current system configuration
         workspace_manager: Optional workspace manager for job workspaces
+        post_submit_hooks: Optional dict mapping application name to a
+            callable(workspace_info) -> dict that enriches the submission result
     """
     # Get default account from environment
     default_account = os.environ.get(ENV_PBS_ACCOUNT, "")
@@ -63,6 +66,12 @@ def register_pbs_tools(
         script are IGNORED. All job attributes must be passed via the API parameters.
         This function automatically extracts settings from workspace metadata when
         submitting via workspace_id.
+
+        IMPORTANT — post-submission reporting:
+        After a successful submission, IMMEDIATELY report the full submission
+        summary to the user including all fields returned (job_id, queue, system,
+        num_nodes, walltime, run_dir, physics_summary if present, diagnostics).
+        Do NOT poll or wait for the job to finish.
 
         REQUIRED PBS ATTRIBUTES (must be provided via parameters or workspace metadata):
         - account: PBS account/project for billing
@@ -99,11 +108,21 @@ def register_pbs_tools(
                     "status": "failed",
                 }
             script_path = workspace_info.script_path
-            # Extract node count from workspace metadata if not explicitly provided
-            if not select_spec and workspace_info.metadata:
-                num_nodes = workspace_info.metadata.get("num_nodes")
-                if num_nodes:
-                    select_spec = str(num_nodes)
+            # Extract submission params from workspace metadata if not explicitly provided
+            if workspace_info.metadata:
+                meta = workspace_info.metadata
+                if not select_spec:
+                    num_nodes = meta.get("num_nodes")
+                    if num_nodes is not None:
+                        select_spec = str(num_nodes)
+                if not walltime and meta.get("walltime"):
+                    walltime = meta["walltime"]
+                if not filesystems and meta.get("filesystems"):
+                    filesystems = meta["filesystems"]
+                if not queue and meta.get("queue"):
+                    queue = meta["queue"]
+                if not job_name and meta.get("job_name"):
+                    job_name = meta["job_name"]
         elif not script_path:
             return {
                 "error": "Either script_path or workspace_id must be provided",
@@ -172,6 +191,16 @@ def register_pbs_tools(
                 if workspace_info:
                     result["workspace_id"] = workspace_info.workspace_id
                     result["workspace_path"] = workspace_info.path
+                    # Invoke application-specific post-submit hook
+                    meta = workspace_info.metadata or {}
+                    app_name = meta.get("application")
+                    if app_name and post_submit_hooks and app_name in post_submit_hooks:
+                        try:
+                            extra = post_submit_hooks[app_name](workspace_info)
+                            if isinstance(extra, dict):
+                                result.update(extra)
+                        except Exception as e:
+                            logger.warning(f"Post-submit hook for {app_name} failed: {e}")
                 return result
         except PBSException as e:
             logger.error(f"Job submission failed: {e}")

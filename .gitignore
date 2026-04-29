@@ -211,3 +211,7 @@ config/systems/local*.yaml
 config/borealis.local.yaml
 *.submit.sh
 logs/
+
+# IDE / local workspace
+.kilocode/
+*.code-workspace
