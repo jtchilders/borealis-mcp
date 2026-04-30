@@ -217,7 +217,7 @@ ssh -N -L 9000:localhost:9000 username@aurora.alcf.anl.gov
 
 Claude Code cannot connect to the server directly using `type: "http"` or `type: "sse"` because it attempts OAuth metadata discovery that FastMCP does not implement. The recommended workaround is [`mcp-remote`](https://github.com/modelcontextprotocol/mcp-remote), a stdio wrapper maintained by the MCP team that handles the HTTP connection correctly.
 
-**Dependency:** Node.js (for `npx`). Verify with `node --version`. Install from [nodejs.org](https://nodejs.org) if needed.
+**Dependency:** Node.js 18 or higher (for `npx`). Verify with `node --version`. Install from [nodejs.org](https://nodejs.org) if needed.
 
 Add the following to your Claude Code MCP settings on your local machine. The settings file is `~/.claude/settings.json` (user-wide) or `.claude/settings.json` inside a specific project:
 
@@ -226,13 +226,13 @@ Add the following to your Claude Code MCP settings on your local machine. The se
   "mcpServers": {
     "borealis": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/mcp-remote", "http://localhost:9000/mcp"]
+      "args": ["-y", "mcp-remote", "http://localhost:9000/mcp"]
     }
   }
 }
 ```
 
-`npx -y` downloads and runs `mcp-remote` automatically on first use; no separate install step is needed.
+`npx -y` downloads and runs [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) automatically on first use; no separate install step is needed.
 
 #### Step 5: Start Claude Code
 
