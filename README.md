@@ -88,9 +88,36 @@ Add to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json` on 
 }
 ```
 
-### On ALCF Login Nodes (Direct Access)
+### On ALCF Login Nodes (Direct SSH Launch)
 
-If you have direct SSH access to ALCF systems, use the startup script:
+Claude Code can launch the MCP server directly over SSH. Because Claude Code cannot respond to interactive prompts, SSH must connect without requiring a password or MFA challenge. The recommended approach is **SSH ControlMaster**, which multiplexes subsequent connections over an already-authenticated session.
+
+#### Step 1: Configure SSH ControlMaster
+
+Add the following to your local `~/.ssh/config`:
+
+```
+Host aurora.alcf.anl.gov
+    ControlMaster auto
+    ControlPath ~/.ssh/control-%h-%p-%r
+    ControlPersist 8h
+```
+
+`ControlPersist 8h` keeps the master connection alive for 8 hours after you close it, so Claude Code can reconnect without prompting.
+
+#### Step 2: Open the master connection
+
+Before starting Claude Code, open one SSH session manually (this is where you complete MFA):
+
+```bash
+ssh aurora.alcf.anl.gov
+```
+
+Leave this terminal open, or let `ControlPersist` hold it in the background after you exit.
+
+#### Step 3: Configure Claude Code
+
+Subsequent SSH connections will reuse the authenticated master. Add to your Claude Code MCP settings (`~/.claude/settings.json`):
 
 ```json
 {
@@ -99,14 +126,14 @@ If you have direct SSH access to ALCF systems, use the startup script:
       "command": "ssh",
       "args": [
         "aurora.alcf.anl.gov",
-        "cd /path/to/borealis-mcp && source ./start_borealis.sh"
+        "cd /path/to/borealis-mcp && ./start_borealis.sh aurora"
       ]
     }
   }
 }
 ```
 
-Or specify a different system:
+For Polaris or Sunspot, replace the host and system name accordingly:
 
 ```json
 {
@@ -115,47 +142,104 @@ Or specify a different system:
       "command": "ssh",
       "args": [
         "polaris.alcf.anl.gov",
-        "cd /path/to/borealis-mcp && source ./start_borealis.sh polaris"
+        "cd /path/to/borealis-mcp && ./start_borealis.sh polaris"
       ]
     }
   }
 }
 ```
 
+> **Note**: `start_borealis.sh` must be *executed* (not sourced) here so that it sets the PBS environment variables and then launches the server. Claude Code communicates with it via stdio.
+
 ### Remote Access via SSH Tunnel
 
-For external users (requires MFA):
+This is the recommended workflow for using Borealis with Claude Code when connecting to an ALCF system from your local machine.
 
-> **Security Note**: The HTTP transport currently has no authentication. While it binds to localhost only, other users on the same login node could potentially access your server. Use with caution and consider this for trusted environments only. Token-based authentication is planned for a future release.
+> **Security Note**: The HTTP transport has no authentication. It binds to `localhost` only, but other users on the same login node could potentially reach your server. Use on trusted networks. Token-based authentication is planned for a future release.
 
-1. **Start the tunnel and server:**
-   ```bash
-   # In one terminal, establish SSH tunnel (will prompt for MFA)
-   ssh -L 9000:localhost:9000 username@aurora.alcf.anl.gov
+#### Step 1: One-time setup on Aurora
 
-   # On Aurora, start the server in HTTP mode
-   cd /path/to/borealis-mcp
-   source venv/bin/activate
-   export PBS_ACCOUNT=your_project
-   python -m borealis_mcp.server --transport http --port 9000
-   ```
+Log in and clone the repository:
 
-2. **Configure Claude Code to use the HTTP bridge:**
-   ```json
-   {
-     "mcpServers": {
-       "borealis": {
-         "command": "/path/to/borealis-mcp/venv/bin/python",
-         "args": ["/path/to/borealis-mcp/tools/http_bridge.py", "http://localhost:9000/mcp"]
-       }
-     }
-   }
-   ```
-
-Or use the helper script:
 ```bash
-./tools/start_borealis_tunnel.sh username
+ssh username@aurora.alcf.anl.gov
+
+git clone --recursive https://github.com/argonne-lcf/borealis-mcp.git
+cd borealis-mcp
+
+# If you already cloned without --recursive:
+git submodule update --init --recursive
+
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
 ```
+
+#### Step 2: Set your PBS account on Aurora
+
+Add your project allocation to `~/.bashrc` (or `~/.bash_profile`) so it is available to the server:
+
+```bash
+echo 'export PBS_ACCOUNT=your_project_allocation' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Step 3: Start the server and tunnel
+
+**Option A — Single command (recommended).** From your **local machine**, run the helper script. It establishes the SSH tunnel and starts the MCP server over a single connection with one MFA prompt:
+
+```bash
+./tools/start_borealis_tunnel.sh your_aurora_username
+# Optional second argument overrides the remote repo path (default: ~/borealis-mcp)
+./tools/start_borealis_tunnel.sh your_aurora_username ~/path/to/borealis-mcp
+```
+
+Keep this terminal open. Press `Ctrl+C` to stop the server and close the tunnel.
+
+**Option B — Two terminals.** Use this if you want the server and tunnel managed separately (requires MFA twice).
+
+*Terminal 1* — log in to Aurora and start the server:
+
+```bash
+ssh username@aurora.alcf.anl.gov
+cd ~/borealis-mcp
+source start_borealis.sh aurora          # sets PBS_SERVER, PBS_ACCOUNT, PYTHONPATH
+python -m borealis_mcp.server --transport http --port 9000
+```
+
+*Terminal 2* — open the port-forwarding tunnel from your local machine:
+
+```bash
+ssh -N -L 9000:localhost:9000 username@aurora.alcf.anl.gov
+```
+
+#### Step 4: Configure Claude Code
+
+Claude Code requires the stdio HTTP bridge to connect to the server. It cannot use `type: "sse"` directly because it attempts OAuth metadata discovery, which FastMCP does not implement.
+
+Copy the bridge script to your local machine:
+
+```bash
+scp username@aurora.alcf.anl.gov:~/borealis-mcp/tools/http_bridge.py ~/http_bridge.py
+pip install requests   # the bridge's only dependency
+```
+
+Then add the following to your Claude Code MCP settings. The settings file is `~/.claude/settings.json` (user-wide) or `.claude/settings.json` inside a specific project:
+
+```json
+{
+  "mcpServers": {
+    "borealis": {
+      "command": "python3",
+      "args": ["/home/YOUR_USERNAME/http_bridge.py", "http://localhost:9000/mcp"]
+    }
+  }
+}
+```
+
+#### Step 5: Start Claude Code
+
+With the tunnel open and the server running, start Claude Code normally. The `borealis` MCP server will be available and Claude can submit and manage PBS jobs on Aurora on your behalf.
 
 ## Available Tools
 

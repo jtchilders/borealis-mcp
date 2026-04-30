@@ -41,7 +41,7 @@ class HTTPBridge:
         """
         self.server_url = server_url.rstrip("/")
         self.session = requests.Session()
-        self.session_id: Optional[str] = "1"
+        self.session_id: Optional[str] = None  # assigned by server after initialize
 
         # Ensure server is reachable
         self._check_server()
@@ -60,7 +60,7 @@ class HTTPBridge:
             print(f"Details: {e}", file=sys.stderr)
             print("Continuing anyway - server may not support /health endpoint", file=sys.stderr)
 
-    def send_request(self, request: dict) -> dict:
+    def send_request(self, request: dict) -> Optional[dict]:
         """
         Send JSON-RPC request to HTTP server.
 
@@ -68,30 +68,34 @@ class HTTPBridge:
             request: JSON-RPC request object
 
         Returns:
-            JSON-RPC response object
+            JSON-RPC response object, or None for notifications (no id) or 202 responses
         """
         try:
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
             }
+            # Include session ID on all requests after initialize
             if self.session_id:
-                headers["X-Session-ID"] = self.session_id
-                headers["x-session-id"] = self.session_id
+                headers["Mcp-Session-Id"] = self.session_id
 
-            # FastMCP serves MCP at /mcp; POST to base path, not /messages
             response = self.session.post(
                 self.server_url,
                 json=request,
                 headers=headers,
                 timeout=30,
             )
-            response.raise_for_status()
 
-            if "X-Session-ID" in response.headers:
-                self.session_id = response.headers["X-Session-ID"]
-            elif self.session_id is None and request.get("method") == "initialize":
-                self.session_id = str(request.get("id", "1"))
+            # Capture session ID assigned by server (case-insensitive lookup)
+            assigned = response.headers.get("Mcp-Session-Id")
+            if assigned:
+                self.session_id = assigned
+
+            # 202 = notification accepted, no response body expected
+            if response.status_code == 202:
+                return None
+
+            response.raise_for_status()
 
             # FastMCP may return JSON or SSE
             content_type = (response.headers.get("Content-Type") or "").lower()
@@ -102,15 +106,13 @@ class HTTPBridge:
                     line = line.strip()
                     if line.startswith("data:"):
                         data = line[len("data:"):].strip()
-                        if data:
+                        if data and data != "[DONE]":
                             return json.loads(data)
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request.get("id"),
-                    "error": {"code": -32000, "message": "SSE response without JSON data"},
-                }
+                return None
 
-            return response.json()
+            if text.strip():
+                return response.json()
+            return None
 
         except requests.exceptions.RequestException as e:
             return {
@@ -135,12 +137,14 @@ class HTTPBridge:
             try:
                 # Parse JSON-RPC request from stdin
                 request = json.loads(line)
+                is_notification = "id" not in request
 
                 # Send to HTTP server
                 response = self.send_request(request)
 
-                # Write response to stdout
-                print(json.dumps(response), flush=True)
+                # Notifications have no response; only write output for requests
+                if not is_notification and response is not None:
+                    print(json.dumps(response), flush=True)
 
             except json.JSONDecodeError as e:
                 error_response = {
