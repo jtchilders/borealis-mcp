@@ -215,27 +215,24 @@ ssh -N -L 9000:localhost:9000 username@aurora.alcf.anl.gov
 
 #### Step 4: Configure Claude Code
 
-Claude Code requires the stdio HTTP bridge to connect to the server. It cannot use `type: "sse"` directly because it attempts OAuth metadata discovery, which FastMCP does not implement.
+Claude Code cannot connect to the server directly using `type: "http"` or `type: "sse"` because it attempts OAuth metadata discovery that FastMCP does not implement. The recommended workaround is [`mcp-remote`](https://github.com/modelcontextprotocol/mcp-remote), a stdio wrapper maintained by the MCP team that handles the HTTP connection correctly.
 
-Copy the bridge script to your local machine:
+**Dependency:** Node.js (for `npx`). Verify with `node --version`. Install from [nodejs.org](https://nodejs.org) if needed.
 
-```bash
-scp username@aurora.alcf.anl.gov:~/borealis-mcp/tools/http_bridge.py ~/http_bridge.py
-pip install requests   # the bridge's only dependency
-```
-
-Then add the following to your Claude Code MCP settings. The settings file is `~/.claude/settings.json` (user-wide) or `.claude/settings.json` inside a specific project:
+Add the following to your Claude Code MCP settings on your local machine. The settings file is `~/.claude/settings.json` (user-wide) or `.claude/settings.json` inside a specific project:
 
 ```json
 {
   "mcpServers": {
     "borealis": {
-      "command": "python3",
-      "args": ["/home/YOUR_USERNAME/http_bridge.py", "http://localhost:9000/mcp"]
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/mcp-remote", "http://localhost:9000/mcp"]
     }
   }
 }
 ```
+
+`npx -y` downloads and runs `mcp-remote` automatically on first use; no separate install step is needed.
 
 #### Step 5: Start Claude Code
 
